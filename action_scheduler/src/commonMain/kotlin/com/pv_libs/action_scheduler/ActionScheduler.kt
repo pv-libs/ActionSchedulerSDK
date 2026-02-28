@@ -1,6 +1,8 @@
 package com.pv_libs.action_scheduler
 
-import com.russhwolf.settings.Settings
+import com.pv_libs.action_scheduler.db.ExecutionLogEntity
+import com.pv_libs.action_scheduler.db.SchedulerRoomDatabase
+import com.pv_libs.action_scheduler.db.SchedulerStateEntity
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -25,6 +27,7 @@ import kotlin.concurrent.Volatile
 
 private const val DEFAULT_STORAGE_NAME = "action_scheduler_sdk"
 private const val DEFAULT_MAX_LOGS = 500
+private const val SCHEDULER_STATE_ROW_ID = "scheduler_state"
 internal const val SDK_RUNNER_TASK_ID = "com.pv_libs.action_scheduler.runner"
 internal const val SDK_WORKER_CLASS_NAME = "ActionSchedulerDispatchWorker"
 private const val MAX_RETRIES = 3
@@ -198,7 +201,108 @@ object ActionSchedulerKit {
             shouldRetry = true,
             message = "ActionSchedulerKit is not initialized",
         )
-        return scheduler.dispatch(inputJson)
+        return scheduler.dispatch(inputJson).apply {
+            logger("dispatchFromWorker - $this")
+        }
+    }
+}
+
+private class SchedulerRoomStore(
+    database: SchedulerRoomDatabase,
+    private val maxExecutionLogs: Int,
+) {
+    private val dao = database.schedulerDao()
+
+    fun loadState(): PersistedSchedulerState {
+        val raw = runBlocking { dao.getState(SCHEDULER_STATE_ROW_ID) }
+
+        return raw
+            ?.let { runCatching { schedulerJson.decodeFromString<PersistedSchedulerState>(it) }.getOrNull() }
+            ?: PersistedSchedulerState()
+    }
+
+    fun saveState(state: PersistedSchedulerState) {
+        runBlocking {
+            dao.upsertState(
+                SchedulerStateEntity(
+                    id = SCHEDULER_STATE_ROW_ID,
+                    stateJson = schedulerJson.encodeToString(state),
+                )
+            )
+        }
+    }
+
+    fun insertLog(log: ExecutionLog) {
+        runBlocking {
+            dao.insertLog(
+                ExecutionLogEntity(
+                    runId = log.runId,
+                    actionId = log.actionId,
+                    triggerId = log.triggerId,
+                    scheduledAtEpochMillis = log.scheduledAtEpochMillis,
+                    startedAtEpochMillis = log.startedAtEpochMillis,
+                    endedAtEpochMillis = log.endedAtEpochMillis,
+                    status = log.status.name,
+                    errorCode = log.errorCode,
+                    errorMessage = log.errorMessage,
+                    platformReason = log.platformReason,
+                )
+            )
+
+            trimLogs(maxExecutionLogs.coerceAtLeast(20))
+        }
+    }
+
+    fun getRecentLogs(
+        actionId: String?,
+        statuses: Set<RunStatus>,
+        limit: Int,
+    ): List<ExecutionLog> {
+        val effectiveLimit = limit.coerceAtLeast(1).toLong()
+        val rows = runBlocking {
+            when {
+                actionId != null && statuses.isNotEmpty() ->
+                    dao.selectRecentByActionAndStatuses(
+                        actionId = actionId,
+                        statuses = statuses.map { it.name },
+                        limit = effectiveLimit,
+                    )
+
+                actionId != null ->
+                    dao.selectRecentByAction(
+                        actionId = actionId,
+                        limit = effectiveLimit,
+                    )
+
+                statuses.isNotEmpty() ->
+                    dao.selectRecentByStatuses(
+                        statuses = statuses.map { it.name },
+                        limit = effectiveLimit,
+                    )
+
+                else -> dao.selectRecentAll(limit = effectiveLimit)
+            }
+        }
+
+        return rows.map { row ->
+            val status = runCatching { RunStatus.valueOf(row.status) }.getOrDefault(RunStatus.FAILED)
+            ExecutionLog(
+                runId = row.runId,
+                actionId = row.actionId,
+                triggerId = row.triggerId,
+                scheduledAtEpochMillis = row.scheduledAtEpochMillis,
+                startedAtEpochMillis = row.startedAtEpochMillis,
+                endedAtEpochMillis = row.endedAtEpochMillis,
+                status = status,
+                errorCode = row.errorCode,
+                errorMessage = row.errorMessage,
+                platformReason = row.platformReason,
+            )
+        }
+    }
+
+    private suspend fun trimLogs(maxEntries: Int) {
+        dao.deleteOverflow(keep = maxEntries.toLong())
     }
 }
 
@@ -230,7 +334,6 @@ private enum class TriggerState {
 private data class PersistedSchedulerState(
     val actions: List<ActionSpec> = emptyList(),
     val pending: List<PendingTrigger> = emptyList(),
-    val logs: List<ExecutionLog> = emptyList(),
 )
 
 @Serializable
@@ -249,8 +352,10 @@ private class DefaultActionScheduler(
     private val config: ActionSchedulerConfig,
 ) : ActionScheduler {
     private val mutex = Mutex()
-    private val settings = Settings()
-    private val stateKey = "${config.storageName}.state"
+    private val sqlStore = SchedulerRoomStore(
+        database = createSchedulerDatabase(config),
+        maxExecutionLogs = config.maxExecutionLogs,
+    )
 
     private val handlers = mutableMapOf<String, ActionHandler>()
     private var notificationHandler: NotificationHandler? = null
@@ -313,13 +418,11 @@ private class DefaultActionScheduler(
         statuses: Set<RunStatus>,
         limit: Int,
     ): List<ExecutionLog> = mutex.withLock {
-        state.logs
-            .asSequence()
-            .filter { actionId == null || it.actionId == actionId }
-            .filter { statuses.isEmpty() || it.status in statuses }
-            .sortedByDescending { it.startedAtEpochMillis }
-            .take(limit.coerceAtLeast(1))
-            .toList()
+        sqlStore.getRecentLogs(
+            actionId = actionId,
+            statuses = statuses,
+            limit = limit,
+        )
     }
 
     override suspend fun getRegisteredActions(): List<ActionSpec> = mutex.withLock {
@@ -401,6 +504,7 @@ private class DefaultActionScheduler(
 
     private suspend fun executeNotification(trigger: PendingTrigger, spec: ActionSpec): WorkerDispatchResult {
         val startedAt = Clock.System.now().toEpochMilliseconds()
+        logger("executeNotification triggered - $spec, $trigger")
         return try {
             notificationHandler?.onNotify(
                 ActionNotification(
@@ -562,10 +666,7 @@ private class DefaultActionScheduler(
             errorCode = errorCode,
             errorMessage = errorMessage,
         )
-        val trimmed = (state.logs + log)
-            .sortedByDescending { it.startedAtEpochMillis }
-            .take(config.maxExecutionLogs.coerceAtLeast(20))
-        state = state.copy(logs = trimmed)
+        sqlStore.insertLog(log)
     }
 
     private suspend fun scheduleNextRecurrence(spec: ActionSpec) = mutex.withLock {
@@ -650,13 +751,11 @@ private class DefaultActionScheduler(
     }
 
     private fun loadState(): PersistedSchedulerState {
-        val raw = settings.getStringOrNull(stateKey) ?: return PersistedSchedulerState()
-        return runCatching { schedulerJson.decodeFromString<PersistedSchedulerState>(raw) }
-            .getOrDefault(PersistedSchedulerState())
+        return sqlStore.loadState()
     }
 
     private fun saveState() {
-        settings.putString(stateKey, schedulerJson.encodeToString(state))
+        sqlStore.saveState(state)
     }
 
     private fun validate(spec: ActionSpec): Boolean {
@@ -778,3 +877,5 @@ internal expect fun createPlatformSchedulerEngine(
     dispatchWorker: suspend (String?) -> WorkerDispatchResult,
     config: ActionSchedulerConfig,
 ): SchedulerEngine
+
+internal expect fun createSchedulerDatabase(config: ActionSchedulerConfig): SchedulerRoomDatabase

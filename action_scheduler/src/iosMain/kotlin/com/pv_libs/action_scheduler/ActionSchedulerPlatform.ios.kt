@@ -109,3 +109,33 @@ internal actual fun createPlatformSchedulerEngine(
     val scheduler = GlobalContext.get().koin.get<BackgroundTaskScheduler>()
     return IosSchedulerEngine(scheduler)
 }
+
+internal actual fun createSchedulerSqlDriver(config: ActionSchedulerConfig): SqlDriver {
+    return NativeSqliteDriver(
+        schema = SchedulerDatabase.Schema,
+        name = "${config.storageName}.db",
+    )
+}
+import com.pv_libs.action_scheduler.db.SchedulerRoomDatabase
+import com.pv_libs.action_scheduler.db.instantiateImpl
+
+@OptIn(ExperimentalForeignApi::class)
+private fun documentDirectory(): String {
+    val documentDirectory = NSFileManager.defaultManager.URLForDirectory(
+        directory = NSDocumentDirectory,
+        inDomain = NSUserDomainMask,
+        appropriateForURL = null,
+        create = false,
+        error = null,
+    )
+    return requireNotNull(documentDirectory?.path)
+}
+
+internal actual fun createSchedulerDatabase(config: ActionSchedulerConfig): SchedulerRoomDatabase {
+    val dbFilePath = documentDirectory() + "/${config.storageName}.db"
+    return Room.databaseBuilder<SchedulerRoomDatabase>(
+        name = dbFilePath,
+        factory = { SchedulerRoomDatabase::class.instantiateImpl() }
+    ).setDriver(bundledSQLiteDriver())
+     .build()
+}

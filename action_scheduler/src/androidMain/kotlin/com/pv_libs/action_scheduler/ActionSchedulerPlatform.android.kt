@@ -1,6 +1,8 @@
 package com.pv_libs.action_scheduler
 
 import android.content.Context
+import androidx.room.Room
+import com.pv_libs.action_scheduler.db.SchedulerRoomDatabase
 import dev.brewkits.kmpworkmanager.KmpWorkManager
 import dev.brewkits.kmpworkmanager.KmpWorkManagerConfig
 import dev.brewkits.kmpworkmanager.background.domain.AndroidWorker
@@ -99,4 +101,15 @@ internal actual fun createPlatformSchedulerEngine(
 
     val scheduler = KmpWorkManager.getInstance().backgroundTaskScheduler
     return AndroidSchedulerEngine(scheduler)
+}
+
+internal actual fun createSchedulerDatabase(config: ActionSchedulerConfig): SchedulerRoomDatabase {
+    val context = config.platformContext as? Context
+        ?: error("ActionSchedulerConfig.platformContext must be Android Context on Android")
+        
+    val dbFile = context.getDatabasePath("${config.storageName}.db")
+    return Room.databaseBuilder<SchedulerRoomDatabase>(
+        context = context,
+        name = dbFile.absolutePath
+    ).build()
 }

@@ -6,10 +6,11 @@ import com.pv_libs.action_scheduler.ActionScheduler
 import com.pv_libs.action_scheduler.ActionSpec
 import com.pv_libs.action_scheduler.RecurrenceRule
 import com.pv_libs.action_scheduler.RegistrationResult
+import com.pv_libs.action_scheduler.logger
 import kotlin.time.Clock
-import kotlin.time.Instant
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
+import kotlin.time.Duration.Companion.minutes
 
 const val DAILY_ACTION_ID = "daily_balance_nudge"
 const val MONTHLY_ACTION_ID = "monthly_auto_pay_reminder"
@@ -19,10 +20,12 @@ private const val ACTION_TYPE_MONTHLY_AUTOPAY = "MONTHLY_AUTOPAY_REMINDER"
 
 fun registerSampleActionHandlers(scheduler: ActionScheduler) {
     scheduler.registerHandler(ACTION_TYPE_BALANCE_NUDGE) { invocation ->
+        logger("ACTION_TYPE_BALANCE_NUDGE triggered - $invocation")
         ActionHandlerResult.Success
     }
 
     scheduler.registerHandler(ACTION_TYPE_MONTHLY_AUTOPAY) { invocation ->
+        logger("ACTION_TYPE_MONTHLY_AUTOPAY triggered - $invocation")
         val shouldFail = invocation.scheduledAtEpochMillis % 5L == 0L
         if (shouldFail) {
             ActionHandlerResult.Failure(
@@ -38,6 +41,7 @@ fun registerSampleActionHandlers(scheduler: ActionScheduler) {
 
 suspend fun scheduleDailySampleAction(scheduler: ActionScheduler): RegistrationResult {
     val runAtLocal = futureLocalDateTime(minutesFromNow = 2)
+    logger("scheduleDailySampleAction - $runAtLocal")
     val spec = ActionSpec(
         actionId = DAILY_ACTION_ID,
         actionType = ACTION_TYPE_BALANCE_NUDGE,
@@ -86,7 +90,6 @@ suspend fun cancelMonthlySampleAction(scheduler: ActionScheduler) {
 }
 
 private fun futureLocalDateTime(minutesFromNow: Int): kotlinx.datetime.LocalDateTime {
-    val nowMs = Clock.System.now().toEpochMilliseconds()
-    val future = Instant.fromEpochMilliseconds(nowMs + minutesFromNow * 60_000L)
+    val future = Clock.System.now() + minutesFromNow.minutes
     return future.toLocalDateTime(TimeZone.currentSystemDefault())
 }
