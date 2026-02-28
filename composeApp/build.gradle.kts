@@ -1,4 +1,3 @@
-import org.jetbrains.compose.desktop.application.dsl.TargetFormat
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
@@ -26,8 +25,6 @@ kotlin {
         }
     }
     
-    jvm()
-    
     sourceSets {
         androidMain.dependencies {
             implementation(libs.compose.uiToolingPreview)
@@ -42,14 +39,10 @@ kotlin {
             implementation(libs.compose.uiToolingPreview)
             implementation(libs.androidx.lifecycle.viewmodelCompose)
             implementation(libs.androidx.lifecycle.runtimeCompose)
+            implementation(project(":action_scheduler"))
         }
         commonTest.dependencies {
             implementation(libs.kotlin.test)
-            implementation(":action_scheduler")
-        }
-        jvmMain.dependencies {
-            implementation(compose.desktop.currentOs)
-            implementation(libs.kotlinx.coroutinesSwing)
         }
     }
 }
@@ -85,14 +78,3 @@ dependencies {
     debugImplementation(libs.compose.uiTooling)
 }
 
-compose.desktop {
-    application {
-        mainClass = "com.pv_libs.sampleactionscheduler.MainKt"
-
-        nativeDistributions {
-            targetFormats(TargetFormat.Dmg, TargetFormat.Msi, TargetFormat.Deb)
-            packageName = "com.pv_libs.sampleactionscheduler"
-            packageVersion = "1.0.0"
-        }
-    }
-}
