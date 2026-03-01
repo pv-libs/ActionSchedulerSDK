@@ -13,6 +13,8 @@ import androidx.compose.foundation.layout.safeContentPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Button
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
@@ -26,18 +28,19 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import com.pv_libs.action_scheduler.ActionSchedulerKit
-import com.pv_libs.action_scheduler.models.ActionSpec
-import com.pv_libs.action_scheduler.models.ExecutionLog
 import com.pv_libs.action_scheduler.models.RegistrationResult
+import com.pv_libs.action_scheduler.models.RunStatus
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.launch
+import kotlinx.datetime.TimeZone
+import kotlinx.datetime.toLocalDateTime
 
 
 @Composable
-fun App() {
+fun HomeScreen() {
     MaterialTheme {
         val scope = rememberCoroutineScope()
         var statusMessage by remember { mutableStateOf("Idle") }
@@ -152,11 +155,31 @@ fun App() {
                         )
                     }
                     items(executionLogs.value) { log ->
-                        Text(
-                            text = log.toString(),
-                            style = MaterialTheme.typography.bodySmall,
-                            modifier = Modifier.padding(16.dp)
-                        )
+                        val color = when(log.status){
+                            RunStatus.FAILED -> Color.Red
+                            RunStatus.SUCCESS -> Color.Green
+                            RunStatus.RUNNING -> Color.Blue
+                            RunStatus.PENDING -> Color.Yellow
+                            else -> Color.Gray
+                        }.copy(alpha = 0.2f)
+                        Card(
+                            colors = CardDefaults.cardColors().copy(containerColor = color),
+                            modifier = Modifier.padding(8.dp),
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(16.dp)
+                            ) {
+                                Text(
+                                    text = "scheduledAt - ${log.scheduledAt.toLocalDateTime(TimeZone.currentSystemDefault())}",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    modifier = Modifier.padding(bottom = 2.dp)
+                                )
+                                Text(
+                                    text = "RunId - ${log.runId}\nStatus - ${log.status}\nActionId - ${log.actionId}\n\n$log",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    )
+                            }
+                        }
                     }
                 }
             }

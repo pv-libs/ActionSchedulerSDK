@@ -10,6 +10,7 @@ import com.pv_libs.action_scheduler.SchedulerRoomStore
 import com.pv_libs.action_scheduler.createPlatformSchedulerEngine
 import com.pv_libs.action_scheduler.createSchedulerDatabase
 import com.pv_libs.action_scheduler.internal.db.models.ActionExecutionEntity
+import com.pv_libs.action_scheduler.logger
 import com.pv_libs.action_scheduler.models.ActionConstraints
 import com.pv_libs.action_scheduler.models.ActionInvocation
 import com.pv_libs.action_scheduler.models.ActionSpec
@@ -264,7 +265,7 @@ internal class DefaultActionScheduler(
         val nextActionAt = nextOccurrence(spec.recurrence, from, zone) ?: return
 
         val executionId = "${spec.actionId}_${nextActionAt.toEpochMilliseconds()}"
-
+        logger("scheduleNextForAction: $spec, \nfrom: $from - \nnextActionAt: $nextActionAt")
         val execution = ActionExecutionEntity(
             id = executionId,
             scheduleId = spec.actionId,
