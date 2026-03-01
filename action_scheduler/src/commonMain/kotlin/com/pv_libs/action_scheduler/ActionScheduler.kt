@@ -20,13 +20,7 @@ internal const val SDK_WORKER_CLASS_NAME = "ActionSchedulerDispatchWorker"
 /** Public API */
 interface ActionScheduler {
     suspend fun registerAction(spec: ActionSpec): RegistrationResult
-    suspend fun updateAction(spec: ActionSpec): RegistrationResult
     suspend fun cancelAction(actionId: String)
-    suspend fun getRecentExecutions(
-        actionId: String? = null,
-        statuses: Set<RunStatus> = emptySet(),
-        limit: Int = 50,
-    ): List<ExecutionLog>
 
     fun getRegisteredActions(): Flow<List<ActionSpec>>
     fun getExecutionLogs(): Flow<List<ExecutionLog>>

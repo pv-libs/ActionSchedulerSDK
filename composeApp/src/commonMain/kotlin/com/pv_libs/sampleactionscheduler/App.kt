@@ -44,7 +44,7 @@ fun HomeScreen() {
     MaterialTheme {
         val scope = rememberCoroutineScope()
         var statusMessage by remember { mutableStateOf("Idle") }
-
+        val permissionHandler = rememberNotificationPermissionHandler()
 
         val scheduler = remember {
             ActionSchedulerKit.getOrNull()
@@ -71,7 +71,7 @@ fun HomeScreen() {
                     style = MaterialTheme.typography.headlineSmall,
                 )
                 Text(
-                    text = "${Greeting().greet()}\nStatus: $statusMessage",
+                    text = "Status: $statusMessage",
                     style = MaterialTheme.typography.bodyMedium,
                 )
 
@@ -85,17 +85,29 @@ fun HomeScreen() {
 
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Button(onClick = {
-                        scope.launch {
-                            val result = scheduleDailySampleAction(scheduler)
-                            statusMessage = result.toStatusLabel("Daily")
+                        permissionHandler.checkAndRequestPermission { isGranted ->
+                            if (isGranted) {
+                                scope.launch {
+                                    val result = scheduleDailySampleAction(scheduler)
+                                    statusMessage = result.toStatusLabel("Daily")
+                                }
+                            } else {
+                                statusMessage = "Notification permission denied"
+                            }
                         }
                     }) {
                         Text("Schedule Daily")
                     }
                     Button(onClick = {
-                        scope.launch {
-                            val result = scheduleMonthlySampleAction(scheduler)
-                            statusMessage = result.toStatusLabel("Monthly")
+                        permissionHandler.checkAndRequestPermission { isGranted ->
+                            if (isGranted) {
+                                scope.launch {
+                                    val result = scheduleMonthlySampleAction(scheduler)
+                                    statusMessage = result.toStatusLabel("Monthly")
+                                }
+                            } else {
+                                statusMessage = "Notification permission denied"
+                            }
                         }
                     }) {
                         Text("Schedule Monthly")
@@ -121,7 +133,6 @@ fun HomeScreen() {
                     }
                 }
 
-                Spacer(modifier = Modifier.height(6.dp))
 
                 LazyColumn(
                     modifier = Modifier.fillMaxWidth().weight(1f)

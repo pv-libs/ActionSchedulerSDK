@@ -29,12 +29,8 @@ interface SchedulerDao {
     @Upsert
     suspend fun upsertSchedule(schedule: ActionScheduleEntity)
 
-    @Query("SELECT * FROM ActionSchedule WHERE id = :id")
-    suspend fun getSchedule(id: String): ActionScheduleEntity?
-
     @Query("SELECT * FROM ActionSchedule")
     suspend fun getAllSchedules(): List<ActionScheduleEntity>
-
 
     @Query("SELECT * FROM ActionSchedule")
     fun getAllSchedulesFlow(): Flow<List<ActionScheduleEntity>>
@@ -56,18 +52,6 @@ interface SchedulerDao {
 
     @Query("SELECT * FROM ActionExecution WHERE status = :status")
     suspend fun getExecutionsByStatus(status: String): List<ActionExecutionEntity>
-
-    @Query("SELECT * FROM ActionExecution ORDER BY scheduledAt DESC LIMIT :limit")
-    suspend fun selectRecentExecutions(limit: Long): List<ActionExecutionEntity>
-
-    @Query("SELECT * FROM ActionExecution WHERE scheduleId = :scheduleId ORDER BY startedAt DESC LIMIT :limit")
-    suspend fun selectRecentExecutionsBySchedule(scheduleId: String, limit: Long): List<ActionExecutionEntity>
-
-    @Query("SELECT * FROM ActionExecution WHERE status IN (:statuses) ORDER BY startedAt DESC LIMIT :limit")
-    suspend fun selectRecentExecutionsByStatuses(statuses: List<String>, limit: Long): List<ActionExecutionEntity>
-
-    @Query("SELECT * FROM ActionExecution WHERE scheduleId = :scheduleId AND status IN (:statuses) ORDER BY startedAt DESC LIMIT :limit")
-    suspend fun selectRecentExecutionsByScheduleAndStatuses(scheduleId: String, statuses: List<String>, limit: Long): List<ActionExecutionEntity>
 
     @Query("DELETE FROM ActionExecution WHERE id NOT IN (SELECT id FROM ActionExecution ORDER BY startedAt DESC LIMIT :keep)")
     suspend fun deleteOverflowExecutions(keep: Long)

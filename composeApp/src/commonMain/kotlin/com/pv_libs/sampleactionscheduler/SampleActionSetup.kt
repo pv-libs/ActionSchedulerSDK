@@ -1,12 +1,15 @@
 package com.pv_libs.sampleactionscheduler
 
 import com.pv_libs.action_scheduler.ActionHandlerResult
+import com.pv_libs.action_scheduler.ActionNotification
 import com.pv_libs.action_scheduler.ActionScheduler
+import com.pv_libs.action_scheduler.NotificationHandler
 import com.pv_libs.action_scheduler.logger
 import com.pv_libs.action_scheduler.models.ActionConstraints
 import com.pv_libs.action_scheduler.models.ActionSpec
 import com.pv_libs.action_scheduler.models.RecurrenceRule
 import com.pv_libs.action_scheduler.models.RegistrationResult
+import kotlinx.coroutines.delay
 import kotlin.time.Clock
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
@@ -18,14 +21,17 @@ const val MONTHLY_ACTION_ID = "monthly_auto_pay_reminder"
 private const val ACTION_TYPE_BALANCE_NUDGE = "BALANCE_NUDGE"
 private const val ACTION_TYPE_MONTHLY_AUTOPAY = "MONTHLY_AUTOPAY_REMINDER"
 
-fun registerSampleActionHandlers(scheduler: ActionScheduler) {
+fun registerSampleActionHandlers(scheduler: ActionScheduler, notificationHandler: NotificationHandler) {
     scheduler.registerHandler(ACTION_TYPE_BALANCE_NUDGE) { invocation ->
         logger("ACTION_TYPE_BALANCE_NUDGE triggered - $invocation")
+        delay(2000)
+        notificationHandler.onNotify(ActionNotification(invocation.actionId, "Daily nudge Executed", invocation.toString()))
         ActionHandlerResult.Success
     }
 
     scheduler.registerHandler(ACTION_TYPE_MONTHLY_AUTOPAY) { invocation ->
         logger("ACTION_TYPE_MONTHLY_AUTOPAY triggered - $invocation")
+        notificationHandler.onNotify(ActionNotification(invocation.actionId, "Monthly Executed", invocation.toString()))
         val shouldFail = invocation.scheduledAt.toEpochMilliseconds() % 5L == 0L
         if (shouldFail) {
             ActionHandlerResult.Failure(

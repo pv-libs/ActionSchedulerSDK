@@ -10,11 +10,7 @@ import com.pv_libs.action_scheduler.models.RecurrenceRule
 import com.pv_libs.action_scheduler.models.RunStatus
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.flow.mapNotNull
-import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
-import kotlin.collections.map
-import kotlin.time.Instant
 
 private val schedulerJson = Json {
     ignoreUnknownKeys = true
@@ -109,53 +105,6 @@ internal class SchedulerRoomStore(
 
     suspend fun getPendingExecutions(): List<ActionExecutionEntity> {
         return dao.getExecutionsByStatus(RunStatus.PENDING.name)
-    }
-
-    suspend fun getRecentLogs(
-        actionId: String?,
-        statuses: Set<RunStatus>,
-        limit: Int,
-    ): List<ExecutionLog> {
-        val effectiveLimit = limit.coerceAtLeast(1).toLong()
-        val rows =
-            when {
-                actionId != null && statuses.isNotEmpty() ->
-                    dao.selectRecentExecutionsByScheduleAndStatuses(
-                        scheduleId = actionId,
-                        statuses = statuses.map { it.name },
-                        limit = effectiveLimit,
-                    )
-
-                actionId != null ->
-                    dao.selectRecentExecutionsBySchedule(
-                        scheduleId = actionId,
-                        limit = effectiveLimit,
-                    )
-
-                statuses.isNotEmpty() ->
-                    dao.selectRecentExecutionsByStatuses(
-                        statuses = statuses.map { it.name },
-                        limit = effectiveLimit,
-                    )
-
-                else -> dao.selectRecentExecutions(limit = effectiveLimit)
-
-            }
-
-        return rows.map { row ->
-            ExecutionLog(
-                runId = row.id,
-                actionId = row.scheduleId,
-                triggerId = "trigger_${row.id}", // Backwards compatibility for now
-                scheduledAt = row.scheduledAt,
-                startedAt = row.startedAt,
-                endedAt = row.endedAt,
-                status = row.status,
-                errorCode = row.errorCode,
-                errorMessage = row.errorMessage,
-                platformReason = null, // Deprecated in new model
-            )
-        }
     }
 
     private suspend fun trimLogs(maxEntries: Int) {

@@ -19,9 +19,12 @@ import com.pv_libs.action_scheduler.models.RecurrenceRule
 import com.pv_libs.action_scheduler.models.RegistrationResult
 import com.pv_libs.action_scheduler.models.RunStatus
 import com.pv_libs.action_scheduler.models.WorkerDispatchResult
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.IO
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.firstOrNull
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.datetime.DatePeriod
@@ -45,6 +48,7 @@ internal class DefaultActionScheduler(
     private val config: ActionSchedulerConfig,
 ) : ActionScheduler {
     private val mutex = Mutex()
+    private val coroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val sqlStore = SchedulerRoomStore(
         database = createSchedulerDatabase(config),
         maxExecutionLogs = config.maxExecutionLogs,
@@ -59,7 +63,7 @@ internal class DefaultActionScheduler(
     )
 
     fun warmStart() {
-        runBlocking {
+        coroutineScope.launch {
             mutex.withLock {
                 val pendingExecutions = sqlStore.getPendingExecutions()
                 for (execution in pendingExecutions) {
@@ -81,10 +85,6 @@ internal class DefaultActionScheduler(
         RegistrationResult.ACCEPTED
     }
 
-    override suspend fun updateAction(spec: ActionSpec): RegistrationResult {
-        return registerAction(spec)
-    }
-
     override suspend fun cancelAction(actionId: String): Unit = mutex.withLock {
         sqlStore.deleteSchedule(actionId)
         val pending = sqlStore.getPendingExecutions().filter { it.scheduleId == actionId }
@@ -92,18 +92,6 @@ internal class DefaultActionScheduler(
             schedulerEngine.cancelRunner(execution.id)
             sqlStore.upsertExecution(execution.copy(status = RunStatus.FAILED, errorMessage = "Canceled"))
         }
-    }
-
-    override suspend fun getRecentExecutions(
-        actionId: String?,
-        statuses: Set<RunStatus>,
-        limit: Int,
-    ): List<ExecutionLog> = mutex.withLock {
-        sqlStore.getRecentLogs(
-            actionId = actionId,
-            statuses = statuses,
-            limit = limit,
-        )
     }
 
     override fun getRegisteredActions(): Flow<List<ActionSpec>> = sqlStore.getAllSchedulesFlow()

@@ -5,7 +5,8 @@ fun interface NotificationHandler {
 }
 
 data class ActionNotification(
-    val actionId: String,
-    val actionType: String,
-    val scheduledActionAtEpochMillis: Long,
+    val id: String,
+    val title: String,
+    val message: String,
+    val payload: Map<String, String> = emptyMap()
 )
