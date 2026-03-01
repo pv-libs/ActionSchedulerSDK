@@ -3,9 +3,6 @@ package com.pv_libs.sampleactionscheduler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -15,10 +12,12 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -30,20 +29,25 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
+import com.pv_libs.action_scheduler.ActionScheduler
 import com.pv_libs.action_scheduler.ActionSchedulerKit
 import com.pv_libs.action_scheduler.models.RegistrationResult
 import com.pv_libs.action_scheduler.models.RunStatus
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.launch
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
 
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HomeScreen() {
     MaterialTheme {
         val scope = rememberCoroutineScope()
         var statusMessage by remember { mutableStateOf("Idle") }
+        val createActionState = remember { CreateActionUIState() }
+        var showCreateActionSheet by remember { mutableStateOf(false) }
         val permissionHandler = rememberNotificationPermissionHandler()
 
         val scheduler = remember {
@@ -83,54 +87,8 @@ fun HomeScreen() {
                     return@Column
                 }
 
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(onClick = {
-                        permissionHandler.checkAndRequestPermission { isGranted ->
-                            if (isGranted) {
-                                scope.launch {
-                                    val result = scheduleDailySampleAction(scheduler)
-                                    statusMessage = result.toStatusLabel("Daily")
-                                }
-                            } else {
-                                statusMessage = "Notification permission denied"
-                            }
-                        }
-                    }) {
-                        Text("Schedule Daily")
-                    }
-                    Button(onClick = {
-                        permissionHandler.checkAndRequestPermission { isGranted ->
-                            if (isGranted) {
-                                scope.launch {
-                                    val result = scheduleMonthlySampleAction(scheduler)
-                                    statusMessage = result.toStatusLabel("Monthly")
-                                }
-                            } else {
-                                statusMessage = "Notification permission denied"
-                            }
-                        }
-                    }) {
-                        Text("Schedule Monthly")
-                    }
-                }
-
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedButton(onClick = {
-                        scope.launch {
-                            cancelDailySampleAction(scheduler)
-                            statusMessage = "Daily action cancelled"
-                        }
-                    }) {
-                        Text("Cancel Daily")
-                    }
-                    OutlinedButton(onClick = {
-                        scope.launch {
-                            cancelMonthlySampleAction(scheduler)
-                            statusMessage = "Monthly action cancelled"
-                        }
-                    }) {
-                        Text("Cancel Monthly")
-                    }
+                Button(onClick = { showCreateActionSheet = true }) {
+                    Text("Create / Manage Reminder")
                 }
 
 
@@ -149,7 +107,7 @@ fun HomeScreen() {
                     }
                     items(registeredActions.value) { log ->
                         Text(
-                            text = log.toString(),
+                            text = "actionId: ${log.actionId}\n\n$log",
                             style = MaterialTheme.typography.bodySmall,
                             modifier = Modifier.padding(16.dp)
                         )
@@ -166,7 +124,7 @@ fun HomeScreen() {
                         )
                     }
                     items(executionLogs.value) { log ->
-                        val color = when(log.status){
+                        val color = when (log.status) {
                             RunStatus.FAILED -> Color.Red
                             RunStatus.SUCCESS -> Color.Green
                             RunStatus.RUNNING -> Color.Blue
@@ -188,14 +146,110 @@ fun HomeScreen() {
                                 Text(
                                     text = "RunId - ${log.runId}\nStatus - ${log.status}\nActionId - ${log.actionId}\n\n$log",
                                     style = MaterialTheme.typography.bodySmall,
-                                    )
+                                )
                             }
                         }
+                    }
+                }
+
+                if (showCreateActionSheet) {
+                    ModalBottomSheet(
+                        sheetState = rememberModalBottomSheetState(true),
+                        onDismissRequest = { showCreateActionSheet = false },
+                    ) {
+                        CreateActionUI(
+                            state = createActionState,
+                            onCreateClick = {
+                                createAction(
+                                    createActionState = createActionState,
+                                    permissionHandler = permissionHandler,
+                                    scheduler = scheduler,
+                                    scope = scope,
+                                    updateState = {
+                                        statusMessage = it
+                                    }
+                                )
+                            },
+                            onCancelClick = {
+                                val trimmedName = createActionState.actionName.trim()
+                                if (trimmedName.isBlank()) {
+                                    statusMessage = "Enter action name to cancel"
+                                    return@CreateActionUI
+                                }
+                                scope.launch {
+                                    cancelCustomAction(scheduler, trimmedName)
+                                    statusMessage = "Cancelled action: $trimmedName"
+                                    showCreateActionSheet = false
+                                }
+                            },
+                        )
                     }
                 }
             }
         }
 
+    }
+}
+
+private fun createAction(
+    createActionState: CreateActionUIState,
+    permissionHandler: NotificationPermissionHandler,
+    scheduler: ActionScheduler,
+    scope: CoroutineScope,
+    updateState: (String) -> Unit
+) {
+    val trimmedName = createActionState.actionName.trim()
+    if (trimmedName.isBlank()) {
+        updateState("Action name is required")
+        return
+    }
+
+    val hour = createActionState.hourInput.toIntOrNull()
+    val minute = createActionState.minuteInput.toIntOrNull()
+    if (hour == null || minute == null || hour !in 0..23 || minute !in 0..59) {
+        updateState("Enter valid hour/minute")
+        return
+    }
+
+    val dayOfWeekIso = createActionState.dayOfWeekInput.toIntOrNull() ?: 1
+    val dayOfMonth = createActionState.dayOfMonthInput.toIntOrNull() ?: 1
+    val oneTimeYear = createActionState.oneTimeYearInput.toIntOrNull() ?: 2026
+    val oneTimeMonth = createActionState.oneTimeMonthInput.toIntOrNull() ?: 1
+    val oneTimeDay = createActionState.oneTimeDayInput.toIntOrNull() ?: 1
+    val notificationOffsetMinutes = createActionState.reminderOffsetInput
+        .trim()
+        .takeIf { it.isNotEmpty() }
+        ?.toIntOrNull()
+
+    permissionHandler.checkAndRequestPermission { isGranted ->
+        if (isGranted) {
+            scope.launch {
+                val result = scheduleCustomAction(
+                    scheduler = scheduler,
+                    input = CustomReminderInput(
+                        actionName = trimmedName,
+                        recurrence = createActionState.recurrence,
+                        notificationOffsetMinutes = notificationOffsetMinutes,
+                        hour = hour,
+                        minute = minute,
+                        dayOfWeekIso = dayOfWeekIso,
+                        dayOfMonth = dayOfMonth,
+                        oneTimeYear = oneTimeYear,
+                        oneTimeMonth = oneTimeMonth,
+                        oneTimeDay = oneTimeDay,
+                    )
+                )
+                val recurringHint =
+                    if (createActionState.recurrence == ReminderRecurrence.BI_WEEKLY) {
+                        " (BI_WEEKLY uses weekly cadence in current SDK sample)"
+                    } else {
+                        ""
+                    }
+                updateState(result.toStatusLabel(trimmedName) + recurringHint)
+            }
+        } else {
+            updateState("Notification permission denied")
+        }
     }
 }
 

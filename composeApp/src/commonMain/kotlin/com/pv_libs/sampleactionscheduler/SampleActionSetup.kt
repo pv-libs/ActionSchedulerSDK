@@ -10,32 +10,48 @@ import com.pv_libs.action_scheduler.models.ActionSpec
 import com.pv_libs.action_scheduler.models.RecurrenceRule
 import com.pv_libs.action_scheduler.models.RegistrationResult
 import kotlinx.coroutines.delay
-import kotlin.time.Clock
+import kotlinx.datetime.LocalDateTime
 import kotlinx.datetime.TimeZone
-import kotlinx.datetime.toLocalDateTime
-import kotlin.time.Duration.Companion.minutes
+import kotlinx.datetime.toInstant
 
-const val DAILY_ACTION_ID = "daily_balance_nudge"
-const val MONTHLY_ACTION_ID = "monthly_auto_pay_reminder"
+private const val ACTION_TYPE_CUSTOM_REMINDER = "CUSTOM_REMINDER"
 
-private const val ACTION_TYPE_BALANCE_NUDGE = "BALANCE_NUDGE"
-private const val ACTION_TYPE_MONTHLY_AUTOPAY = "MONTHLY_AUTOPAY_REMINDER"
+enum class ReminderRecurrence {
+    DAILY,
+    WEEKLY,
+    BI_WEEKLY,
+    MONTHLY,
+    ONE_TIME,
+}
+
+data class CustomReminderInput(
+    val actionName: String,
+    val recurrence: ReminderRecurrence,
+    val notificationOffsetMinutes: Int?,
+    val hour: Int,
+    val minute: Int,
+    val dayOfWeekIso: Int = 1,
+    val dayOfMonth: Int = 1,
+    val oneTimeYear: Int = 2026,
+    val oneTimeMonth: Int = 1,
+    val oneTimeDay: Int = 1,
+)
 
 fun registerSampleActionHandlers(scheduler: ActionScheduler, notificationHandler: NotificationHandler) {
-    scheduler.registerHandler(ACTION_TYPE_BALANCE_NUDGE) { invocation ->
-        logger("ACTION_TYPE_BALANCE_NUDGE triggered - $invocation")
+    scheduler.registerHandler(ACTION_TYPE_CUSTOM_REMINDER) { invocation ->
+        logger("ACTION_TYPE_CUSTOM_REMINDER triggered - $invocation")
         delay(2000)
-        notificationHandler.onNotify(ActionNotification(invocation.actionId, "Daily nudge Executed", invocation.toString()))
-        ActionHandlerResult.Success
-    }
-
-    scheduler.registerHandler(ACTION_TYPE_MONTHLY_AUTOPAY) { invocation ->
-        logger("ACTION_TYPE_MONTHLY_AUTOPAY triggered - $invocation")
-        notificationHandler.onNotify(ActionNotification(invocation.actionId, "Monthly Executed", invocation.toString()))
+        notificationHandler.onNotify(
+            ActionNotification(
+                invocation.actionId,
+                "Reminder executed",
+                invocation.toString(),
+            )
+        )
         val shouldFail = invocation.scheduledAt.toEpochMilliseconds() % 5L == 0L
         if (shouldFail) {
             ActionHandlerResult.Failure(
-                message = "Simulated transient failure for monthly reminder",
+                message = "Simulated transient failure for reminder",
                 retryable = true,
                 errorCode = "SIMULATED_RETRYABLE",
             )
@@ -45,57 +61,59 @@ fun registerSampleActionHandlers(scheduler: ActionScheduler, notificationHandler
     }
 }
 
-suspend fun scheduleDailySampleAction(scheduler: ActionScheduler): RegistrationResult {
-    val runAtLocal = futureLocalDateTime(minutesFromNow = 2)
-    logger("scheduleDailySampleAction - $runAtLocal")
+suspend fun scheduleCustomAction(
+    scheduler: ActionScheduler,
+    input: CustomReminderInput,
+): RegistrationResult {
+    val actionName = input.actionName.trim()
+    val recurrenceRule = when (input.recurrence) {
+        ReminderRecurrence.DAILY -> RecurrenceRule.Daily(
+            hour = input.hour,
+            minute = input.minute,
+        )
+
+        ReminderRecurrence.WEEKLY,
+        ReminderRecurrence.BI_WEEKLY,
+        -> RecurrenceRule.Weekly(
+            dayOfWeekIso = input.dayOfWeekIso,
+            hour = input.hour,
+            minute = input.minute,
+        )
+
+        ReminderRecurrence.MONTHLY -> RecurrenceRule.Monthly(
+            dayOfMonth = input.dayOfMonth,
+            hour = input.hour,
+            minute = input.minute,
+        )
+
+        ReminderRecurrence.ONE_TIME -> {
+            val dateTime = LocalDateTime(
+                year = input.oneTimeYear,
+                monthNumber = input.oneTimeMonth,
+                dayOfMonth = input.oneTimeDay,
+                hour = input.hour,
+                minute = input.minute,
+            )
+            RecurrenceRule.OneTime(dateTime.toInstant(TimeZone.currentSystemDefault()))
+        }
+    }
+    val payload = "{\"title\":\"$actionName\",\"recurrence\":\"${input.recurrence.name}\"}"
+    val notificationText = "Reminder for $actionName at 5 PM"
+
     val spec = ActionSpec(
-        actionId = DAILY_ACTION_ID,
-        actionType = ACTION_TYPE_BALANCE_NUDGE,
-        payloadJson = "{\"title\":\"Daily balance nudge\"}",
-        recurrence = RecurrenceRule.Daily(
-            hour = runAtLocal.hour,
-            minute = runAtLocal.minute,
-        ),
+        actionId = actionName,
+        actionType = ACTION_TYPE_CUSTOM_REMINDER,
+        payloadJson = payload,
+        recurrence = recurrenceRule,
         timezoneId = TimeZone.currentSystemDefault().id,
-        notificationOffsetMinutes = 1,
-        constraints = ActionConstraints(
-            requiresNetwork = false,
-            requiresCharging = false,
-        ),
+        notificationOffsetMinutes = input.notificationOffsetMinutes,
+        notificationTitle = notificationText,
+        notificationDescription = notificationText,
+        constraints = ActionConstraints(),
     )
     return scheduler.registerAction(spec)
 }
 
-suspend fun scheduleMonthlySampleAction(scheduler: ActionScheduler): RegistrationResult {
-    val runAtLocal = futureLocalDateTime(minutesFromNow = 3)
-    val spec = ActionSpec(
-        actionId = MONTHLY_ACTION_ID,
-        actionType = ACTION_TYPE_MONTHLY_AUTOPAY,
-        payloadJson = "{\"title\":\"Monthly auto-pay reminder\"}",
-        recurrence = RecurrenceRule.Monthly(
-            dayOfMonth = runAtLocal.dayOfMonth,
-            hour = runAtLocal.hour,
-            minute = runAtLocal.minute,
-        ),
-        timezoneId = TimeZone.currentSystemDefault().id,
-        notificationOffsetMinutes = 2,
-        constraints = ActionConstraints(
-            requiresNetwork = true,
-            requiresCharging = false,
-        ),
-    )
-    return scheduler.registerAction(spec)
-}
-
-suspend fun cancelDailySampleAction(scheduler: ActionScheduler) {
-    scheduler.cancelAction(DAILY_ACTION_ID)
-}
-
-suspend fun cancelMonthlySampleAction(scheduler: ActionScheduler) {
-    scheduler.cancelAction(MONTHLY_ACTION_ID)
-}
-
-private fun futureLocalDateTime(minutesFromNow: Int): kotlinx.datetime.LocalDateTime {
-    val future = Clock.System.now() + minutesFromNow.minutes
-    return future.toLocalDateTime(TimeZone.currentSystemDefault())
+suspend fun cancelCustomAction(scheduler: ActionScheduler, actionName: String) {
+    scheduler.cancelAction(actionName.trim())
 }
