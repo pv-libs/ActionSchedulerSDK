@@ -9,9 +9,7 @@ import com.pv_libs.action_scheduler.ActionSchedulerConfig
 import com.pv_libs.action_scheduler.ActionSchedulerKit
 
 class SampleActionSchedulerApp : Application() {
-    init {
-        System.setProperty("kotlin-logging-to-android-native", "true")
-    }
+
     override fun onCreate() {
         super.onCreate()
 

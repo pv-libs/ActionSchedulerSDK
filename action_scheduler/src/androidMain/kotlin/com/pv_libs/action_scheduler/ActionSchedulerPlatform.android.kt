@@ -2,7 +2,9 @@ package com.pv_libs.action_scheduler
 
 import android.content.Context
 import androidx.room.Room
-import com.pv_libs.action_scheduler.db.SchedulerRoomDatabase
+import com.pv_libs.action_scheduler.internal.db.SchedulerRoomDatabase
+import com.pv_libs.action_scheduler.models.ActionConstraints
+import com.pv_libs.action_scheduler.models.WorkerDispatchResult
 import dev.brewkits.kmpworkmanager.KmpWorkManager
 import dev.brewkits.kmpworkmanager.KmpWorkManagerConfig
 import dev.brewkits.kmpworkmanager.background.domain.AndroidWorker
@@ -19,12 +21,13 @@ private class AndroidSchedulerEngine(
     private val scheduler: BackgroundTaskScheduler,
 ) : SchedulerEngine {
     override suspend fun scheduleRunner(
+        executionId: String,
         delayMs: Long,
         inputJson: String,
         constraints: ActionConstraints,
     ): Boolean {
         val scheduleResult = scheduler.enqueue(
-            id = SDK_RUNNER_TASK_ID,
+            id = executionId,
             trigger = TaskTrigger.OneTime(initialDelayMs = delayMs.coerceAtLeast(0L)),
             workerClassName = SDK_WORKER_CLASS_NAME,
             constraints = Constraints(
@@ -45,8 +48,8 @@ private class AndroidSchedulerEngine(
         return scheduleResult == ScheduleResult.ACCEPTED
     }
 
-    override fun cancelRunner() {
-        scheduler.cancel(SDK_RUNNER_TASK_ID)
+    override fun cancelRunner(executionId: String) {
+        scheduler.cancel(executionId)
     }
 }
 
@@ -111,5 +114,6 @@ internal actual fun createSchedulerDatabase(config: ActionSchedulerConfig): Sche
     return Room.databaseBuilder<SchedulerRoomDatabase>(
         context = context,
         name = dbFile.absolutePath
-    ).build()
+    ).fallbackToDestructiveMigration(true)
+    .build()
 }

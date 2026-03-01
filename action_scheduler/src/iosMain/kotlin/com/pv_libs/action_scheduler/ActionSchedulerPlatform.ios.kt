@@ -1,5 +1,8 @@
 package com.pv_libs.action_scheduler
 
+import androidx.room.Room
+import com.pv_libs.action_scheduler.models.ActionConstraints
+import com.pv_libs.action_scheduler.models.WorkerDispatchResult
 import dev.brewkits.kmpworkmanager.KmpWorkManagerConfig
 import dev.brewkits.kmpworkmanager.background.data.IosWorker
 import dev.brewkits.kmpworkmanager.background.data.IosWorkerFactory
@@ -11,22 +14,27 @@ import dev.brewkits.kmpworkmanager.background.domain.ScheduleResult
 import dev.brewkits.kmpworkmanager.background.domain.TaskTrigger
 import dev.brewkits.kmpworkmanager.background.domain.WorkerResult
 import dev.brewkits.kmpworkmanager.kmpWorkerModule
+import kotlinx.cinterop.ExperimentalForeignApi
 import org.koin.core.context.GlobalContext
 import org.koin.core.context.loadKoinModules
 import org.koin.core.context.startKoin
 import org.koin.core.module.Module
+import platform.Foundation.NSDocumentDirectory
+import platform.Foundation.NSFileManager
+import platform.Foundation.NSUserDomainMask
 import kotlin.concurrent.Volatile
 
 private class IosSchedulerEngine(
     private val scheduler: BackgroundTaskScheduler,
 ) : SchedulerEngine {
     override suspend fun scheduleRunner(
+        executionId: String,
         delayMs: Long,
         inputJson: String,
         constraints: ActionConstraints,
     ): Boolean {
         val result = scheduler.enqueue(
-            id = SDK_RUNNER_TASK_ID,
+            id = executionId,
             trigger = TaskTrigger.OneTime(initialDelayMs = delayMs.coerceAtLeast(0L)),
             workerClassName = SDK_WORKER_CLASS_NAME,
             constraints = Constraints(
@@ -47,8 +55,8 @@ private class IosSchedulerEngine(
         return result == ScheduleResult.ACCEPTED
     }
 
-    override fun cancelRunner() {
-        scheduler.cancel(SDK_RUNNER_TASK_ID)
+    override fun cancelRunner(executionId: String) {
+        scheduler.cancel(executionId)
     }
 }
 
@@ -116,7 +124,7 @@ internal actual fun createSchedulerSqlDriver(config: ActionSchedulerConfig): Sql
         name = "${config.storageName}.db",
     )
 }
-import com.pv_libs.action_scheduler.db.SchedulerRoomDatabase
+import com.pv_libs.action_scheduler.internal.db.SchedulerRoomDatabase
 import com.pv_libs.action_scheduler.db.instantiateImpl
 
 @OptIn(ExperimentalForeignApi::class)
@@ -137,5 +145,6 @@ internal actual fun createSchedulerDatabase(config: ActionSchedulerConfig): Sche
         name = dbFilePath,
         factory = { SchedulerRoomDatabase::class.instantiateImpl() }
     ).setDriver(bundledSQLiteDriver())
+     .fallbackToDestructiveMigration()
      .build()
 }

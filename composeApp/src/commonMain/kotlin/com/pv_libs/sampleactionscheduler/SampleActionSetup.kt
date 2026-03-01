@@ -1,12 +1,12 @@
 package com.pv_libs.sampleactionscheduler
 
-import com.pv_libs.action_scheduler.ActionConstraints
 import com.pv_libs.action_scheduler.ActionHandlerResult
 import com.pv_libs.action_scheduler.ActionScheduler
-import com.pv_libs.action_scheduler.ActionSpec
-import com.pv_libs.action_scheduler.RecurrenceRule
-import com.pv_libs.action_scheduler.RegistrationResult
 import com.pv_libs.action_scheduler.logger
+import com.pv_libs.action_scheduler.models.ActionConstraints
+import com.pv_libs.action_scheduler.models.ActionSpec
+import com.pv_libs.action_scheduler.models.RecurrenceRule
+import com.pv_libs.action_scheduler.models.RegistrationResult
 import kotlin.time.Clock
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime

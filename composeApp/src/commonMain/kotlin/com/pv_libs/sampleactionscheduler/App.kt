@@ -27,8 +27,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.pv_libs.action_scheduler.ActionSchedulerKit
-import com.pv_libs.action_scheduler.ExecutionLog
-import com.pv_libs.action_scheduler.RegistrationResult
+import com.pv_libs.action_scheduler.models.ExecutionLog
+import com.pv_libs.action_scheduler.models.RegistrationResult
 import kotlinx.coroutines.launch
 
 
