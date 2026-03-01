@@ -26,7 +26,7 @@ fun registerSampleActionHandlers(scheduler: ActionScheduler) {
 
     scheduler.registerHandler(ACTION_TYPE_MONTHLY_AUTOPAY) { invocation ->
         logger("ACTION_TYPE_MONTHLY_AUTOPAY triggered - $invocation")
-        val shouldFail = invocation.scheduledAtEpochMillis % 5L == 0L
+        val shouldFail = invocation.scheduledAt.toEpochMilliseconds() % 5L == 0L
         if (shouldFail) {
             ActionHandlerResult.Failure(
                 message = "Simulated transient failure for monthly reminder",

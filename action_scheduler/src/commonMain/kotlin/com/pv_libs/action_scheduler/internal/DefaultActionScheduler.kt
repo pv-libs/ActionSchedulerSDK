@@ -136,9 +136,9 @@ internal class DefaultActionScheduler(
             return WorkerDispatchResult(success = false, message = "Schedule not found")
         }
 
-        val startedAt = Clock.System.now().toEpochMilliseconds()
+        val startedAt = Clock.System.now()
         mutex.withLock {
-            sqlStore.upsertExecution(execution.copy(status = RunStatus.RUNNING, startedAtEpochMillis = startedAt))
+            sqlStore.upsertExecution(execution.copy(status = RunStatus.RUNNING, startedAt = startedAt))
         }
 
         // TODO: Handle Notifications based on execution metadata if needed.
@@ -158,7 +158,7 @@ internal class DefaultActionScheduler(
                         actionId = schedule.actionId,
                         actionType = schedule.actionType,
                         payloadJson = schedule.payloadJson,
-                        scheduledAtEpochMillis = execution.scheduledAtEpochMillis,
+                        scheduledAt = execution.scheduledAt,
                     )
                 )
             ) {
@@ -174,14 +174,14 @@ internal class DefaultActionScheduler(
 
                     if (shouldRetry) {
                         val nextDelay = nextBackoffDelay(schedule.constraints, attempt)
-                        val rescheduledAt = Clock.System.now().toEpochMilliseconds() + nextDelay
+                        val rescheduledAt = Clock.System.now().plus(kotlin.time.Duration.parse("${nextDelay}ms"))
 
                         // Reschedule existing execution
                         val updatedExecution = execution.copy(
-                            scheduledAtEpochMillis = rescheduledAt,
+                            scheduledAt = rescheduledAt,
                             status = RunStatus.PENDING,
                             retryCount = attempt + 1,
-                            startedAtEpochMillis = null // Reset start time for next attempt
+                            startedAt = null // Reset start time for next attempt
                         )
                         mutex.withLock { sqlStore.upsertExecution(updatedExecution) }
                         scheduleWorker(updatedExecution, schedule)
@@ -203,13 +203,13 @@ internal class DefaultActionScheduler(
 
             if (shouldRetry) {
                 val nextDelay = nextBackoffDelay(schedule.constraints, attempt)
-                val rescheduledAt = Clock.System.now().toEpochMilliseconds() + nextDelay
+                val rescheduledAt = Clock.System.now().plus(kotlin.time.Duration.parse("${nextDelay}ms"))
 
                 val updatedExecution = execution.copy(
-                    scheduledAtEpochMillis = rescheduledAt,
+                    scheduledAt = rescheduledAt,
                     status = RunStatus.PENDING,
                     retryCount = attempt + 1,
-                    startedAtEpochMillis = null
+                    startedAt = null
                 )
                 mutex.withLock { sqlStore.upsertExecution(updatedExecution) }
                 scheduleWorker(updatedExecution, schedule)
@@ -227,15 +227,15 @@ internal class DefaultActionScheduler(
         status: RunStatus,
         errorCode: String? = null,
         errorMessage: String? = null,
-        startedAt: Long? = null
+        startedAt: Instant? = null
     ) = mutex.withLock {
         val execution = sqlStore.getExecution(executionId) ?: return@withLock
-        val now = Clock.System.now().toEpochMilliseconds()
+        val now = Clock.System.now()
         sqlStore.upsertExecution(
             execution.copy(
                 status = status,
-                startedAtEpochMillis = startedAt ?: execution.startedAtEpochMillis,
-                endedAtEpochMillis = now,
+                startedAt = startedAt ?: execution.startedAt,
+                endedAt = now,
                 errorCode = errorCode,
                 errorMessage = errorMessage
             )
@@ -268,9 +268,9 @@ internal class DefaultActionScheduler(
         val execution = ActionExecutionEntity(
             id = executionId,
             scheduleId = spec.actionId,
-            scheduledAtEpochMillis = nextActionAt.toEpochMilliseconds(),
-            startedAtEpochMillis = null,
-            endedAtEpochMillis = null,
+            scheduledAt = nextActionAt,
+            startedAt = null,
+            endedAt = null,
             status = RunStatus.PENDING,
             retryCount = 0
         )
@@ -281,7 +281,7 @@ internal class DefaultActionScheduler(
 
     private suspend fun scheduleWorker(execution: ActionExecutionEntity, spec: ActionSpec) {
         val nowMs = Clock.System.now().toEpochMilliseconds()
-        val delayMs = (execution.scheduledAtEpochMillis - nowMs).coerceAtLeast(0)
+        val delayMs = (execution.scheduledAt.toEpochMilliseconds() - nowMs).coerceAtLeast(0)
 
         schedulerEngine.scheduleRunner(
             executionId = execution.id,
@@ -296,7 +296,7 @@ internal class DefaultActionScheduler(
         if (spec.notificationOffsetMinutes != null && spec.notificationOffsetMinutes < 0) return false
 
         return when (val recurrence = spec.recurrence) {
-            is RecurrenceRule.OneTime -> recurrence.atEpochMillis > Clock.System.now().toEpochMilliseconds()
+            is RecurrenceRule.OneTime -> recurrence.at > Clock.System.now()
             is RecurrenceRule.Daily -> isValidHourMinute(recurrence.hour, recurrence.minute)
             is RecurrenceRule.Weekly -> {
                 isValidHourMinute(recurrence.hour, recurrence.minute) && recurrence.dayOfWeekIso in 1..7
@@ -326,7 +326,7 @@ internal class DefaultActionScheduler(
     private fun nextOccurrence(rule: RecurrenceRule, from: Instant, timeZone: TimeZone): Instant? {
         return when (rule) {
             is RecurrenceRule.OneTime -> {
-                val candidate = Instant.fromEpochMilliseconds(rule.atEpochMillis)
+                val candidate = rule.at
                 if (candidate > from) candidate else null
             }
 

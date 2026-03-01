@@ -4,11 +4,25 @@ import androidx.room.Dao
 import androidx.room.Database
 import androidx.room.Query
 import androidx.room.RoomDatabase
+import androidx.room.TypeConverter
+import androidx.room.TypeConverters
 import androidx.room.Upsert
 import com.pv_libs.action_scheduler.internal.db.models.ActionExecutionEntity
 import com.pv_libs.action_scheduler.internal.db.models.ActionScheduleEntity
 import kotlinx.coroutines.flow.Flow
+import kotlin.time.Instant
 
+class InstantConverter {
+    @TypeConverter
+    fun fromTimestamp(value: Long?): Instant? {
+        return value?.let { Instant.fromEpochMilliseconds(it) }
+    }
+
+    @TypeConverter
+    fun dateToTimestamp(date: Instant?): Long? {
+        return date?.toEpochMilliseconds()
+    }
+}
 
 @Dao
 interface SchedulerDao {
@@ -31,7 +45,7 @@ interface SchedulerDao {
     @Upsert
     suspend fun upsertExecution(execution: ActionExecutionEntity)
 
-    @Query("SELECT * FROM ActionExecution ORDER BY scheduledAtEpochMillis DESC")
+    @Query("SELECT * FROM ActionExecution ORDER BY scheduledAt DESC")
     fun getExecutionsListFlow(): Flow<List<ActionExecutionEntity>>
 
     @Query("SELECT * FROM ActionExecution WHERE id = :id")
@@ -43,23 +57,24 @@ interface SchedulerDao {
     @Query("SELECT * FROM ActionExecution WHERE status = :status")
     suspend fun getExecutionsByStatus(status: String): List<ActionExecutionEntity>
 
-    @Query("SELECT * FROM ActionExecution ORDER BY scheduledAtEpochMillis DESC LIMIT :limit")
+    @Query("SELECT * FROM ActionExecution ORDER BY scheduledAt DESC LIMIT :limit")
     suspend fun selectRecentExecutions(limit: Long): List<ActionExecutionEntity>
 
-    @Query("SELECT * FROM ActionExecution WHERE scheduleId = :scheduleId ORDER BY startedAtEpochMillis DESC LIMIT :limit")
+    @Query("SELECT * FROM ActionExecution WHERE scheduleId = :scheduleId ORDER BY startedAt DESC LIMIT :limit")
     suspend fun selectRecentExecutionsBySchedule(scheduleId: String, limit: Long): List<ActionExecutionEntity>
 
-    @Query("SELECT * FROM ActionExecution WHERE status IN (:statuses) ORDER BY startedAtEpochMillis DESC LIMIT :limit")
+    @Query("SELECT * FROM ActionExecution WHERE status IN (:statuses) ORDER BY startedAt DESC LIMIT :limit")
     suspend fun selectRecentExecutionsByStatuses(statuses: List<String>, limit: Long): List<ActionExecutionEntity>
 
-    @Query("SELECT * FROM ActionExecution WHERE scheduleId = :scheduleId AND status IN (:statuses) ORDER BY startedAtEpochMillis DESC LIMIT :limit")
+    @Query("SELECT * FROM ActionExecution WHERE scheduleId = :scheduleId AND status IN (:statuses) ORDER BY startedAt DESC LIMIT :limit")
     suspend fun selectRecentExecutionsByScheduleAndStatuses(scheduleId: String, statuses: List<String>, limit: Long): List<ActionExecutionEntity>
 
-    @Query("DELETE FROM ActionExecution WHERE id NOT IN (SELECT id FROM ActionExecution ORDER BY startedAtEpochMillis DESC LIMIT :keep)")
+    @Query("DELETE FROM ActionExecution WHERE id NOT IN (SELECT id FROM ActionExecution ORDER BY startedAt DESC LIMIT :keep)")
     suspend fun deleteOverflowExecutions(keep: Long)
 }
 
 @Database(entities = [ActionScheduleEntity::class, ActionExecutionEntity::class], version = 2)
+@TypeConverters(InstantConverter::class)
 abstract class SchedulerRoomDatabase : RoomDatabase() {
     abstract fun schedulerDao(): SchedulerDao
 }

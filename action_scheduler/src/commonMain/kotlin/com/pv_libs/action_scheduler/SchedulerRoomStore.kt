@@ -14,6 +14,7 @@ import kotlinx.coroutines.flow.mapNotNull
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
 import kotlin.collections.map
+import kotlin.time.Instant
 
 private val schedulerJson = Json {
     ignoreUnknownKeys = true
@@ -90,9 +91,9 @@ internal class SchedulerRoomStore(
                     runId = row.id,
                     actionId = row.scheduleId,
                     triggerId = "trigger_${row.id}", // Backwards compatibility for now
-                    scheduledAtEpochMillis = row.scheduledAtEpochMillis,
-                    startedAtEpochMillis = row.startedAtEpochMillis ?: 0L,
-                    endedAtEpochMillis = row.endedAtEpochMillis ?: 0L,
+                    scheduledAt = row.scheduledAt,
+                    startedAt = row.startedAt,
+                    endedAt = row.endedAt,
                     status = row.status,
                     errorCode = row.errorCode,
                     errorMessage = row.errorMessage,
@@ -146,9 +147,9 @@ internal class SchedulerRoomStore(
                 runId = row.id,
                 actionId = row.scheduleId,
                 triggerId = "trigger_${row.id}", // Backwards compatibility for now
-                scheduledAtEpochMillis = row.scheduledAtEpochMillis,
-                startedAtEpochMillis = row.startedAtEpochMillis ?: 0L,
-                endedAtEpochMillis = row.endedAtEpochMillis ?: 0L,
+                scheduledAt = row.scheduledAt,
+                startedAt = row.startedAt,
+                endedAt = row.endedAt,
                 status = row.status,
                 errorCode = row.errorCode,
                 errorMessage = row.errorMessage,

@@ -1,5 +1,6 @@
 package com.pv_libs.action_scheduler.models
 
+import kotlin.time.Instant
 import kotlinx.datetime.TimeZone
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
@@ -30,7 +31,7 @@ data class ActionConstraints(
 sealed interface RecurrenceRule {
     @Serializable
     @SerialName("one_time")
-    data class OneTime(val atEpochMillis: Long) : RecurrenceRule
+    data class OneTime(val at: Instant) : RecurrenceRule
 
     @Serializable
     @SerialName("daily")
