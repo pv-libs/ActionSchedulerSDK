@@ -10,6 +10,9 @@ data class ActionScheduleEntity(
     val payloadJson: String,
     val recurrenceRuleJson: String,
     val timezoneId: String,
+    val notificationOffsetMinutes: Int?,
+    val notificationTitle: String?,
+    val notificationDescription: String?,
     val enabled: Boolean,
     val constraintsJson: String
 )

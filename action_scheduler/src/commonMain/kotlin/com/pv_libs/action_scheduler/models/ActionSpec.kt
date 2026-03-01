@@ -14,6 +14,8 @@ data class ActionSpec(
     val recurrence: RecurrenceRule,
     val timezoneId: String = TimeZone.currentSystemDefault().id,
     val notificationOffsetMinutes: Int? = null,
+    val notificationTitle: String? = null,
+    val notificationDescription: String? = null,
     val enabled: Boolean = true,
     val constraints: ActionConstraints = ActionConstraints(),
 )

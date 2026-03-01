@@ -2,6 +2,7 @@ package com.pv_libs.action_scheduler.internal
 
 import com.pv_libs.action_scheduler.ActionHandler
 import com.pv_libs.action_scheduler.ActionHandlerResult
+import com.pv_libs.action_scheduler.ActionNotification
 import com.pv_libs.action_scheduler.ActionScheduler
 import com.pv_libs.action_scheduler.ActionSchedulerConfig
 import com.pv_libs.action_scheduler.ActionSchedulerKit
@@ -39,10 +40,12 @@ import kotlinx.datetime.number
 import kotlinx.datetime.plus
 import kotlinx.datetime.toInstant
 import kotlinx.datetime.toLocalDateTime
+import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Clock
 import kotlin.time.Instant
 
 private const val MAX_RETRIES = 3
+private const val REMINDER_SUFFIX = "-reminder"
 
 internal class DefaultActionScheduler(
     private val config: ActionSchedulerConfig,
@@ -128,6 +131,10 @@ internal class DefaultActionScheduler(
         val startedAt = Clock.System.now()
         mutex.withLock {
             sqlStore.upsertExecution(execution.copy(status = RunStatus.RUNNING, startedAt = startedAt))
+        }
+
+        if (isReminderExecution(execution.id)) {
+            return dispatchReminder(executionId = executionId, schedule = schedule, startedAt = startedAt)
         }
 
         // TODO: Handle Notifications based on execution metadata if needed.
@@ -266,6 +273,65 @@ internal class DefaultActionScheduler(
 
         sqlStore.upsertExecution(execution)
         scheduleWorker(execution, spec)
+
+        val reminderExecution = buildReminderExecution(mainExecution = execution, spec = spec)
+        if (reminderExecution != null) {
+            sqlStore.upsertExecution(reminderExecution)
+            scheduleWorker(reminderExecution, spec)
+        }
+    }
+
+    private fun buildReminderExecution(
+        mainExecution: ActionExecutionEntity,
+        spec: ActionSpec,
+    ): ActionExecutionEntity? {
+        val reminderOffsetMinutes = spec.notificationOffsetMinutes ?: return null
+        val reminderAt = mainExecution.scheduledAt.minus(reminderOffsetMinutes.minutes)
+        return ActionExecutionEntity(
+            id = "${mainExecution.id}$REMINDER_SUFFIX",
+            scheduleId = spec.actionId,
+            scheduledAt = reminderAt,
+            startedAt = null,
+            endedAt = null,
+            status = RunStatus.PENDING,
+            retryCount = 0,
+        )
+    }
+
+    private suspend fun dispatchReminder(
+        executionId: String,
+        schedule: ActionSpec,
+        startedAt: Instant,
+    ): WorkerDispatchResult {
+        return try {
+            notificationHandler?.onNotify(
+                ActionNotification(
+                    id = executionId,
+                    title = schedule.notificationTitle ?: schedule.actionType,
+                    message = schedule.notificationDescription ?: "Reminder for action ${schedule.actionId}",
+                    payload = mapOf(
+                        "actionId" to schedule.actionId,
+                        "actionType" to schedule.actionType,
+                        "executionId" to executionId,
+                    ),
+                )
+            )
+            updateExecutionStatus(executionId, RunStatus.SUCCESS, startedAt = startedAt)
+            WorkerDispatchResult(success = true)
+        } catch (t: Throwable) {
+            updateExecutionStatus(
+                executionId,
+                RunStatus.FAILED,
+                errorCode = "NOTIFICATION_EXCEPTION",
+                errorMessage = t.message ?: "Notification dispatch failed",
+                startedAt = startedAt,
+            )
+            WorkerDispatchResult(success = false, shouldRetry = false, message = t.message)
+        }
+    }
+
+    private fun isReminderExecution(executionId: String): Boolean {
+        return executionId.endsWith(REMINDER_SUFFIX)
     }
 
     private suspend fun scheduleWorker(execution: ActionExecutionEntity, spec: ActionSpec) {

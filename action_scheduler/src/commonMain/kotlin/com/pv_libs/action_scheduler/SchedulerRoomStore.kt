@@ -34,6 +34,9 @@ internal class SchedulerRoomStore(
                     payloadJson = row.payloadJson,
                     recurrence = schedulerJson.decodeFromString<RecurrenceRule>(row.recurrenceRuleJson),
                     timezoneId = row.timezoneId,
+                    notificationOffsetMinutes = row.notificationOffsetMinutes,
+                    notificationTitle = row.notificationTitle,
+                    notificationDescription = row.notificationDescription,
                     enabled = row.enabled,
                     constraints = schedulerJson.decodeFromString<ActionConstraints>(row.constraintsJson)
                 )
@@ -50,6 +53,9 @@ internal class SchedulerRoomStore(
                     payloadJson = row.payloadJson,
                     recurrence = schedulerJson.decodeFromString<RecurrenceRule>(row.recurrenceRuleJson),
                     timezoneId = row.timezoneId,
+                    notificationOffsetMinutes = row.notificationOffsetMinutes,
+                    notificationTitle = row.notificationTitle,
+                    notificationDescription = row.notificationDescription,
                     enabled = row.enabled,
                     constraints = schedulerJson.decodeFromString<ActionConstraints>(row.constraintsJson)
                 )
@@ -65,6 +71,9 @@ internal class SchedulerRoomStore(
                 payloadJson = spec.payloadJson,
                 recurrenceRuleJson = schedulerJson.encodeToString(spec.recurrence),
                 timezoneId = spec.timezoneId,
+                notificationOffsetMinutes = spec.notificationOffsetMinutes,
+                notificationTitle = spec.notificationTitle,
+                notificationDescription = spec.notificationDescription,
                 enabled = spec.enabled,
                 constraintsJson = schedulerJson.encodeToString(spec.constraints)
             )

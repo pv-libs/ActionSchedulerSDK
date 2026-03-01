@@ -57,7 +57,7 @@ interface SchedulerDao {
     suspend fun deleteOverflowExecutions(keep: Long)
 }
 
-@Database(entities = [ActionScheduleEntity::class, ActionExecutionEntity::class], version = 2)
+@Database(entities = [ActionScheduleEntity::class, ActionExecutionEntity::class], version = 3)
 @TypeConverters(InstantConverter::class)
 abstract class SchedulerRoomDatabase : RoomDatabase() {
     abstract fun schedulerDao(): SchedulerDao
