@@ -6,5 +6,6 @@ enum class RunStatus {
     DEDUPE_SKIPPED,
     NOTIFICATION_SENT,
     HANDLER_NOT_FOUND,
+    RUNNING,
     PENDING
 }

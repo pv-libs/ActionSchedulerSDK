@@ -18,6 +18,8 @@ import com.pv_libs.action_scheduler.models.RecurrenceRule
 import com.pv_libs.action_scheduler.models.RegistrationResult
 import com.pv_libs.action_scheduler.models.RunStatus
 import com.pv_libs.action_scheduler.models.WorkerDispatchResult
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -87,7 +89,7 @@ internal class DefaultActionScheduler(
         val pending = sqlStore.getPendingExecutions().filter { it.scheduleId == actionId }
         for (execution in pending) {
             schedulerEngine.cancelRunner(execution.id)
-            sqlStore.upsertExecution(execution.copy(status = RunStatus.FAILED.name, errorMessage = "Canceled"))
+            sqlStore.upsertExecution(execution.copy(status = RunStatus.FAILED, errorMessage = "Canceled"))
         }
     }
 
@@ -103,9 +105,9 @@ internal class DefaultActionScheduler(
         )
     }
 
-    override suspend fun getRegisteredActions(): List<ActionSpec> = mutex.withLock {
-        sqlStore.getAllSchedules().sortedBy { it.actionId }
-    }
+    override fun getRegisteredActions(): Flow<List<ActionSpec>> = sqlStore.getAllSchedulesFlow()
+
+    override fun getExecutionLogs(): Flow<List<ExecutionLog>> = sqlStore.getExecutionsListFlow()
 
     override fun registerHandler(actionType: String, handler: ActionHandler) {
         if (actionType.isBlank()) return
@@ -124,7 +126,7 @@ internal class DefaultActionScheduler(
         val execution = mutex.withLock { sqlStore.getExecution(executionId) }
             ?: return WorkerDispatchResult(success = false, message = "Execution $executionId not found")
 
-        if (execution.status != RunStatus.PENDING.name) {
+        if (execution.status != RunStatus.PENDING) {
             return WorkerDispatchResult(success = true, message = "Execution already processed")
         }
 
@@ -136,7 +138,7 @@ internal class DefaultActionScheduler(
 
         val startedAt = Clock.System.now().toEpochMilliseconds()
         mutex.withLock {
-            sqlStore.upsertExecution(execution.copy(status = "RUNNING", startedAtEpochMillis = startedAt))
+            sqlStore.upsertExecution(execution.copy(status = RunStatus.RUNNING, startedAtEpochMillis = startedAt))
         }
 
         // TODO: Handle Notifications based on execution metadata if needed.
@@ -177,7 +179,7 @@ internal class DefaultActionScheduler(
                         // Reschedule existing execution
                         val updatedExecution = execution.copy(
                             scheduledAtEpochMillis = rescheduledAt,
-                            status = RunStatus.PENDING.name,
+                            status = RunStatus.PENDING,
                             retryCount = attempt + 1,
                             startedAtEpochMillis = null // Reset start time for next attempt
                         )
@@ -205,7 +207,7 @@ internal class DefaultActionScheduler(
 
                 val updatedExecution = execution.copy(
                     scheduledAtEpochMillis = rescheduledAt,
-                    status = RunStatus.PENDING.name,
+                    status = RunStatus.PENDING,
                     retryCount = attempt + 1,
                     startedAtEpochMillis = null
                 )
@@ -231,7 +233,7 @@ internal class DefaultActionScheduler(
         val now = Clock.System.now().toEpochMilliseconds()
         sqlStore.upsertExecution(
             execution.copy(
-                status = status.name,
+                status = status,
                 startedAtEpochMillis = startedAt ?: execution.startedAtEpochMillis,
                 endedAtEpochMillis = now,
                 errorCode = errorCode,
@@ -269,7 +271,7 @@ internal class DefaultActionScheduler(
             scheduledAtEpochMillis = nextActionAt.toEpochMilliseconds(),
             startedAtEpochMillis = null,
             endedAtEpochMillis = null,
-            status = RunStatus.PENDING.name,
+            status = RunStatus.PENDING,
             retryCount = 0
         )
 

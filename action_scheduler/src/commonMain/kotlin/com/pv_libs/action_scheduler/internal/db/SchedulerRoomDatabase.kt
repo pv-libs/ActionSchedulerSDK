@@ -7,6 +7,7 @@ import androidx.room.RoomDatabase
 import androidx.room.Upsert
 import com.pv_libs.action_scheduler.internal.db.models.ActionExecutionEntity
 import com.pv_libs.action_scheduler.internal.db.models.ActionScheduleEntity
+import kotlinx.coroutines.flow.Flow
 
 
 @Dao
@@ -20,11 +21,18 @@ interface SchedulerDao {
     @Query("SELECT * FROM ActionSchedule")
     suspend fun getAllSchedules(): List<ActionScheduleEntity>
 
+
+    @Query("SELECT * FROM ActionSchedule")
+    fun getAllSchedulesFlow(): Flow<List<ActionScheduleEntity>>
+
     @Query("DELETE FROM ActionSchedule WHERE id = :id")
     suspend fun deleteSchedule(id: String)
 
     @Upsert
     suspend fun upsertExecution(execution: ActionExecutionEntity)
+
+    @Query("SELECT * FROM ActionExecution ORDER BY scheduledAtEpochMillis DESC")
+    fun getExecutionsListFlow(): Flow<List<ActionExecutionEntity>>
 
     @Query("SELECT * FROM ActionExecution WHERE id = :id")
     suspend fun getExecution(id: String): ActionExecutionEntity?
@@ -35,7 +43,7 @@ interface SchedulerDao {
     @Query("SELECT * FROM ActionExecution WHERE status = :status")
     suspend fun getExecutionsByStatus(status: String): List<ActionExecutionEntity>
 
-    @Query("SELECT * FROM ActionExecution ORDER BY startedAtEpochMillis DESC LIMIT :limit")
+    @Query("SELECT * FROM ActionExecution ORDER BY scheduledAtEpochMillis DESC LIMIT :limit")
     suspend fun selectRecentExecutions(limit: Long): List<ActionExecutionEntity>
 
     @Query("SELECT * FROM ActionExecution WHERE scheduleId = :scheduleId ORDER BY startedAtEpochMillis DESC LIMIT :limit")

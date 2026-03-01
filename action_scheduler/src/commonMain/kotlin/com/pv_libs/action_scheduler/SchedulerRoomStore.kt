@@ -8,8 +8,12 @@ import com.pv_libs.action_scheduler.models.ActionSpec
 import com.pv_libs.action_scheduler.models.ExecutionLog
 import com.pv_libs.action_scheduler.models.RecurrenceRule
 import com.pv_libs.action_scheduler.models.RunStatus
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.mapNotNull
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
+import kotlin.collections.map
 
 private val schedulerJson = Json {
     ignoreUnknownKeys = true
@@ -23,8 +27,8 @@ internal class SchedulerRoomStore(
 ) {
     private val dao = database.schedulerDao()
 
-    fun getAllSchedules(): List<ActionSpec> {
-        val rows = runBlocking { dao.getAllSchedules() }
+    suspend fun getAllSchedules(): List<ActionSpec> {
+        val rows = dao.getAllSchedules()
         return rows.mapNotNull { row ->
             runCatching {
                 ActionSpec(
@@ -40,48 +44,79 @@ internal class SchedulerRoomStore(
         }
     }
 
-    fun upsertSchedule(spec: ActionSpec) {
-        runBlocking {
-            dao.upsertSchedule(
-                ActionScheduleEntity(
-                    id = spec.actionId,
-                    actionType = spec.actionType,
-                    payloadJson = spec.payloadJson,
-                    recurrenceRuleJson = schedulerJson.encodeToString(spec.recurrence),
-                    timezoneId = spec.timezoneId,
-                    enabled = spec.enabled,
-                    constraintsJson = schedulerJson.encodeToString(spec.constraints)
+    fun getAllSchedulesFlow() = dao.getAllSchedulesFlow().map {
+        it.mapNotNull { row ->
+            runCatching {
+                ActionSpec(
+                    actionId = row.id,
+                    actionType = row.actionType,
+                    payloadJson = row.payloadJson,
+                    recurrence = schedulerJson.decodeFromString<RecurrenceRule>(row.recurrenceRuleJson),
+                    timezoneId = row.timezoneId,
+                    enabled = row.enabled,
+                    constraints = schedulerJson.decodeFromString<ActionConstraints>(row.constraintsJson)
                 )
+            }.getOrNull()
+        }
+    }
+
+    suspend fun upsertSchedule(spec: ActionSpec) {
+        dao.upsertSchedule(
+            ActionScheduleEntity(
+                id = spec.actionId,
+                actionType = spec.actionType,
+                payloadJson = spec.payloadJson,
+                recurrenceRuleJson = schedulerJson.encodeToString(spec.recurrence),
+                timezoneId = spec.timezoneId,
+                enabled = spec.enabled,
+                constraintsJson = schedulerJson.encodeToString(spec.constraints)
             )
+        )
+    }
+
+    suspend fun deleteSchedule(actionId: String) {
+        dao.deleteSchedule(actionId)
+    }
+
+    suspend fun upsertExecution(execution: ActionExecutionEntity) {
+        dao.upsertExecution(execution)
+        trimLogs(maxExecutionLogs.coerceAtLeast(20))
+    }
+
+    fun getExecutionsListFlow(): Flow<List<ExecutionLog>> {
+        return dao.getExecutionsListFlow().map { list ->
+            list.map { row ->
+                ExecutionLog(
+                    runId = row.id,
+                    actionId = row.scheduleId,
+                    triggerId = "trigger_${row.id}", // Backwards compatibility for now
+                    scheduledAtEpochMillis = row.scheduledAtEpochMillis,
+                    startedAtEpochMillis = row.startedAtEpochMillis ?: 0L,
+                    endedAtEpochMillis = row.endedAtEpochMillis ?: 0L,
+                    status = row.status,
+                    errorCode = row.errorCode,
+                    errorMessage = row.errorMessage,
+                    platformReason = null, // Deprecated in new model
+                )
+            }
         }
     }
 
-    fun deleteSchedule(actionId: String) {
-        runBlocking { dao.deleteSchedule(actionId) }
+    suspend fun getExecution(executionId: String): ActionExecutionEntity? {
+        return dao.getExecution(executionId)
     }
 
-    fun upsertExecution(execution: ActionExecutionEntity) {
-        runBlocking {
-            dao.upsertExecution(execution)
-            trimLogs(maxExecutionLogs.coerceAtLeast(20))
-        }
+    suspend fun getPendingExecutions(): List<ActionExecutionEntity> {
+        return dao.getExecutionsByStatus(RunStatus.PENDING.name)
     }
 
-    fun getExecution(executionId: String): ActionExecutionEntity? {
-        return runBlocking { dao.getExecution(executionId) }
-    }
-
-    fun getPendingExecutions(): List<ActionExecutionEntity> {
-        return runBlocking { dao.getExecutionsByStatus(RunStatus.PENDING.name) }
-    }
-
-    fun getRecentLogs(
+    suspend fun getRecentLogs(
         actionId: String?,
         statuses: Set<RunStatus>,
         limit: Int,
     ): List<ExecutionLog> {
         val effectiveLimit = limit.coerceAtLeast(1).toLong()
-        val rows = runBlocking {
+        val rows =
             when {
                 actionId != null && statuses.isNotEmpty() ->
                     dao.selectRecentExecutionsByScheduleAndStatuses(
@@ -103,11 +138,10 @@ internal class SchedulerRoomStore(
                     )
 
                 else -> dao.selectRecentExecutions(limit = effectiveLimit)
+
             }
-        }
 
         return rows.map { row ->
-            val status = runCatching { RunStatus.valueOf(row.status) }.getOrDefault(RunStatus.FAILED)
             ExecutionLog(
                 runId = row.id,
                 actionId = row.scheduleId,
@@ -115,7 +149,7 @@ internal class SchedulerRoomStore(
                 scheduledAtEpochMillis = row.scheduledAtEpochMillis,
                 startedAtEpochMillis = row.startedAtEpochMillis ?: 0L,
                 endedAtEpochMillis = row.endedAtEpochMillis ?: 0L,
-                status = status,
+                status = row.status,
                 errorCode = row.errorCode,
                 errorMessage = row.errorMessage,
                 platformReason = null, // Deprecated in new model

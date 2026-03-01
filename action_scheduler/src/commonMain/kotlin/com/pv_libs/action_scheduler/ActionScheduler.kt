@@ -6,12 +6,15 @@ import com.pv_libs.action_scheduler.models.ExecutionLog
 import com.pv_libs.action_scheduler.models.RegistrationResult
 import com.pv_libs.action_scheduler.models.RunStatus
 import com.pv_libs.action_scheduler.models.WorkerDispatchResult
+import kotlinx.coroutines.flow.Flow
 import kotlin.concurrent.Volatile
 
 private const val DEFAULT_STORAGE_NAME = "action_scheduler_sdk"
 private const val DEFAULT_MAX_LOGS = 500
 internal const val SDK_RUNNER_TASK_ID = "com.pv_libs.action_scheduler.runner"
 internal const val SDK_WORKER_CLASS_NAME = "ActionSchedulerDispatchWorker"
+
+
 
 
 /** Public API */
@@ -25,7 +28,8 @@ interface ActionScheduler {
         limit: Int = 50,
     ): List<ExecutionLog>
 
-    suspend fun getRegisteredActions(): List<ActionSpec>
+    fun getRegisteredActions(): Flow<List<ActionSpec>>
+    fun getExecutionLogs(): Flow<List<ExecutionLog>>
 
     fun registerHandler(actionType: String, handler: ActionHandler)
     fun setNotificationHandler(handler: NotificationHandler?)
