@@ -26,12 +26,11 @@ class SampleActionSchedulerApp : Application() {
 
         try {
             val scheduler = ActionSchedulerKit.initialize(
+                SampleActionHandlerFactory(notificationHandler),
                 ActionSchedulerConfig(
                     platformContext = this,
                 )
             )
-
-            registerSampleActionHandlers(scheduler, notificationHandler)
             scheduler.setNotificationHandler(notificationHandler)
         } catch (ex: Exception){
             logger(ex.toString())

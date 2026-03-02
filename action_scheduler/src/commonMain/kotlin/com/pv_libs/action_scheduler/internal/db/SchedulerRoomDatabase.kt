@@ -31,9 +31,6 @@ interface SchedulerDao {
     @Upsert
     suspend fun upsertSchedule(schedule: ActionScheduleEntity)
 
-    @Query("SELECT * FROM ActionSchedule")
-    suspend fun getAllSchedules(): List<ActionScheduleEntity>
-
     @Query("SELECT * FROM ActionSchedule WHERE id = :id")
     suspend fun getSchedule(id: String): ActionScheduleEntity?
 

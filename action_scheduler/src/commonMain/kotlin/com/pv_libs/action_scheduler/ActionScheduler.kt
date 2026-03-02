@@ -4,11 +4,8 @@ import com.pv_libs.action_scheduler.internal.DefaultActionScheduler
 import com.pv_libs.action_scheduler.models.ActionSpec
 import com.pv_libs.action_scheduler.models.ExecutionLog
 import com.pv_libs.action_scheduler.models.RegistrationResult
-import com.pv_libs.action_scheduler.models.RunStatus
 import com.pv_libs.action_scheduler.models.WorkerDispatchResult
 import kotlinx.coroutines.flow.Flow
-import org.koin.mp.KoinPlatformTools.synchronized
-import org.koin.mp.Lockable
 import kotlin.concurrent.Volatile
 
 private const val DEFAULT_STORAGE_NAME = "action_scheduler_sdk"
@@ -27,7 +24,6 @@ interface ActionScheduler {
     fun getRegisteredActions(): Flow<List<ActionSpec>>
     fun getExecutionLogs(): Flow<List<ExecutionLog>>
 
-    fun registerHandler(actionType: String, handler: ActionHandler)
     fun setNotificationHandler(handler: NotificationHandler?)
 }
 
@@ -56,9 +52,12 @@ object ActionSchedulerKit {
     @Volatile
     private var instance: DefaultActionScheduler? = null
 
-    fun initialize(config: ActionSchedulerConfig = ActionSchedulerConfig()): ActionScheduler {
+    fun initialize(
+        actionHandlerFactory: ActionHandlerFactory,
+        config: ActionSchedulerConfig = ActionSchedulerConfig()
+    ): ActionScheduler {
         instance?.let { return it }
-        val scheduler = DefaultActionScheduler(config)
+        val scheduler = DefaultActionScheduler(config, actionHandlerFactory)
         scheduler.warmStart()
         instance = scheduler
 

@@ -16,16 +16,15 @@ fun initializeSampleActionSchedulerIos() {
 }
 
 fun initializeActionSchedulerIos(taskIds: List<String>) {
+    val notificationHandler: NotificationHandler = { notification ->
+        showNotification(notification)
+    }
     val scheduler = ActionSchedulerKit.initialize(
+        SampleActionHandlerFactory(notificationHandler),
         ActionSchedulerConfig(
             iosTaskIds = taskIds.toSet(),
         )
     )
-    val notificationHandler: NotificationHandler = { notification ->
-        showNotification(notification)
-    }
-    registerSampleActionHandlers(scheduler, notificationHandler)
-    
     scheduler.setNotificationHandler(notificationHandler)
 }
 

@@ -32,12 +32,17 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import com.pv_libs.action_scheduler.ActionScheduler
 import com.pv_libs.action_scheduler.ActionSchedulerKit
+import com.pv_libs.action_scheduler.models.ActionConstraints
+import com.pv_libs.action_scheduler.models.ActionSpec
+import com.pv_libs.action_scheduler.models.RecurrenceRule
 import com.pv_libs.action_scheduler.models.RegistrationResult
 import com.pv_libs.action_scheduler.models.RunStatus
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.launch
+import kotlinx.datetime.LocalDateTime
 import kotlinx.datetime.TimeZone
+import kotlinx.datetime.toInstant
 import kotlinx.datetime.toLocalDateTime
 
 
@@ -265,6 +270,66 @@ private fun createAction(
         }
     }
 }
+
+
+private suspend fun scheduleCustomAction(
+    scheduler: ActionScheduler,
+    input: CustomReminderInput,
+): RegistrationResult {
+    val actionName = input.actionName.trim()
+    val recurrenceRule = when (val recurrence = input.recurrence) {
+        ReminderRecurrence.DAILY -> RecurrenceRule.Daily(
+            hour = input.hour,
+            minute = input.minute,
+        )
+
+        ReminderRecurrence.WEEKLY,
+        ReminderRecurrence.BI_WEEKLY,
+            -> RecurrenceRule.Weekly(
+            dayOfWeekIso = input.dayOfWeekIso,
+            hour = input.hour,
+            minute = input.minute,
+            skipWeeks = if(recurrence == ReminderRecurrence.WEEKLY) 0 else 1
+        )
+
+        ReminderRecurrence.MONTHLY -> RecurrenceRule.Monthly(
+            dayOfMonth = input.dayOfMonth,
+            hour = input.hour,
+            minute = input.minute,
+        )
+
+        ReminderRecurrence.ONE_TIME -> {
+            val dateTime = LocalDateTime(
+                year = input.oneTimeYear,
+                month = input.oneTimeMonth,
+                day = input.oneTimeDay,
+                hour = input.hour,
+                minute = input.minute,
+            )
+            RecurrenceRule.OneTime(dateTime.toInstant(TimeZone.currentSystemDefault()))
+        }
+    }
+    val payload = "{\"title\":\"$actionName\",\"recurrence\":\"${input.recurrence.name}\"}"
+    val notificationText = "Reminder for $actionName at 5 PM"
+
+    val spec = ActionSpec(
+        actionId = actionName,
+        actionType = ACTION_TYPE_CUSTOM_REMINDER,
+        payloadJson = payload,
+        recurrence = recurrenceRule,
+        timezoneId = TimeZone.currentSystemDefault().id,
+        notificationOffsetMinutes = input.notificationOffsetMinutes,
+        notificationTitle = notificationText,
+        notificationDescription = notificationText,
+        constraints = ActionConstraints(),
+    )
+    return scheduler.registerAction(spec)
+}
+
+private suspend fun cancelCustomAction(scheduler: ActionScheduler, actionName: String) {
+    scheduler.cancelAction(actionName.trim())
+}
+
 
 private fun RegistrationResult.toStatusLabel(actionName: String): String {
     return "$actionName action: $this"

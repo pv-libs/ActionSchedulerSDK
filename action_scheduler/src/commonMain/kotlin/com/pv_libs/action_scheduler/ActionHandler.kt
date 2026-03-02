@@ -6,3 +6,7 @@ import com.pv_libs.action_scheduler.models.ActionInvocation
 fun interface ActionHandler {
     suspend fun onExecute(invocation: ActionInvocation): ActionHandlerResult
 }
+
+fun interface ActionHandlerFactory {
+    fun create(actionType: String): ActionHandler?
+}

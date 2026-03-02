@@ -1,6 +1,6 @@
 package com.pv_libs.action_scheduler.internal
 
-import com.pv_libs.action_scheduler.ActionHandler
+import com.pv_libs.action_scheduler.ActionHandlerFactory
 import com.pv_libs.action_scheduler.ActionHandlerResult
 import com.pv_libs.action_scheduler.ActionNotification
 import com.pv_libs.action_scheduler.ActionScheduler
@@ -21,16 +21,10 @@ import com.pv_libs.action_scheduler.models.RecurrenceRule
 import com.pv_libs.action_scheduler.models.RegistrationResult
 import com.pv_libs.action_scheduler.models.RunStatus
 import com.pv_libs.action_scheduler.models.WorkerDispatchResult
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.IO
-import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import kotlinx.coroutines.withContext
 import kotlinx.datetime.DatePeriod
 import kotlinx.datetime.DayOfWeek
 import kotlinx.datetime.LocalDate
@@ -43,8 +37,8 @@ import kotlinx.datetime.number
 import kotlinx.datetime.plus
 import kotlinx.datetime.toInstant
 import kotlinx.datetime.toLocalDateTime
-import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Clock
+import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Instant
 
 private const val MAX_RETRIES = 3
@@ -54,15 +48,14 @@ private const val UNKNOWN_SCHEDULE_ID = "unknown"
 
 internal class DefaultActionScheduler(
     private val config: ActionSchedulerConfig,
+    private val actionHandlerFactory: ActionHandlerFactory
 ) : ActionScheduler {
     private val mutex = Mutex()
-    private val coroutineScope = CoroutineScope(SupervisorJob())
     private val sqlStore = SchedulerRoomStore(
         database = createSchedulerDatabase(config),
         maxExecutionLogs = config.maxExecutionLogs,
     )
 
-    private val handlers = mutableMapOf<String, ActionHandler>()
     private var notificationHandler: NotificationHandler? = null
 
     private val schedulerEngine = createPlatformSchedulerEngine(
@@ -92,7 +85,7 @@ internal class DefaultActionScheduler(
         return result
     }
 
-    override suspend fun cancelAction(actionId: String): Unit {
+    override suspend fun cancelAction(actionId: String) {
         mutex.withLock {
             sqlStore.deleteSchedule(actionId)
             val pending = sqlStore.getPendingExecutions().filter { it.scheduleId == actionId }
@@ -114,11 +107,6 @@ internal class DefaultActionScheduler(
     override fun getRegisteredActions(): Flow<List<ActionSpec>> = sqlStore.getAllSchedulesFlow()
 
     override fun getExecutionLogs(): Flow<List<ExecutionLog>> = sqlStore.getExecutionsListFlow()
-
-    override fun registerHandler(actionType: String, handler: ActionHandler) {
-        if (actionType.isBlank()) return
-        handlers[actionType] = handler
-    }
 
     override fun setNotificationHandler(handler: NotificationHandler?) {
         notificationHandler = handler
@@ -154,7 +142,7 @@ internal class DefaultActionScheduler(
                 return dispatchReminder(executionId = executionId, schedule = schedule, startedAt = startedAt)
             }
 
-            val handler = handlers[schedule.actionType]
+            val handler = actionHandlerFactory.create(schedule.actionType)
             if (handler == null) {
                 updateExecutionStatus(executionId, RunStatus.HANDLER_NOT_FOUND, errorMessage = "No handler for ${schedule.actionType}", startedAt = startedAt)
                 scheduleNextRecurrence(schedule)
@@ -420,7 +408,7 @@ internal class DefaultActionScheduler(
         val (execution, spec) = target
         val nowMs = Clock.System.now().toEpochMilliseconds()
         val delayMs = (execution.scheduledAt.toEpochMilliseconds() - nowMs).coerceAtLeast(0)
-
+        logger("Runner scheduled to run at : ${execution.scheduledAt.toLocalDateTime(TimeZone.currentSystemDefault())}")
         schedulerEngine.scheduleRunner(
             runnerTaskId = SDK_RUNNER_TASK_ID,
             delayMs = delayMs,

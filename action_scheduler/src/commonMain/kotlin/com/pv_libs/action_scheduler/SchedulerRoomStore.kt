@@ -24,26 +24,6 @@ internal class SchedulerRoomStore(
 ) {
     private val dao = database.schedulerDao()
 
-    suspend fun getAllSchedules(): List<ActionSpec> {
-        val rows = dao.getAllSchedules()
-        return rows.mapNotNull { row ->
-            runCatching {
-                ActionSpec(
-                    actionId = row.id,
-                    actionType = row.actionType,
-                    payloadJson = row.payloadJson,
-                    recurrence = schedulerJson.decodeFromString<RecurrenceRule>(row.recurrenceRuleJson),
-                    timezoneId = row.timezoneId,
-                    notificationOffsetMinutes = row.notificationOffsetMinutes,
-                    notificationTitle = row.notificationTitle,
-                    notificationDescription = row.notificationDescription,
-                    enabled = row.enabled,
-                    constraints = schedulerJson.decodeFromString<ActionConstraints>(row.constraintsJson)
-                )
-            }.getOrNull()
-        }
-    }
-
     suspend fun getSchedule(actionId: String): ActionSpec? {
         val row = dao.getSchedule(actionId) ?: return null
         return runCatching {

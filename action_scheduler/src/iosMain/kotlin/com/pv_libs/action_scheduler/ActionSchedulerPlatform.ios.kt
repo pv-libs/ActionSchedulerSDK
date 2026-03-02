@@ -13,9 +13,7 @@ import dev.brewkits.kmpworkmanager.background.domain.ScheduleResult
 import dev.brewkits.kmpworkmanager.background.domain.TaskTrigger
 import dev.brewkits.kmpworkmanager.background.domain.WorkerResult
 import dev.brewkits.kmpworkmanager.kmpWorkerModule
-import kotlinx.coroutines.Dispatchers
 import kotlinx.cinterop.ExperimentalForeignApi
-import kotlinx.coroutines.withContext
 import org.koin.core.context.loadKoinModules
 import org.koin.core.context.startKoin
 import org.koin.core.module.Module

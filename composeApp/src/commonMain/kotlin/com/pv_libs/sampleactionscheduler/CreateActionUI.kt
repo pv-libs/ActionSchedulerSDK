@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.DatePicker
 import androidx.compose.material3.DatePickerDialog
@@ -211,24 +212,24 @@ private fun TimeSelector(
     onTimeChange: (hour: Int, minute: Int) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    var showPicker by remember { mutableStateOf(false) }
+    val showPicker = remember { mutableStateOf(false) }
     val now = Clock.System.now().toLocalDateTime(TimeZone.currentSystemDefault())
 
     Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Text(text = "Time", style = MaterialTheme.typography.titleSmall)
-        OutlinedButton(onClick = { showPicker = true }, modifier = Modifier.fillMaxWidth()) {
+        OutlinedButton(onClick = { showPicker.value = true }, modifier = Modifier.fillMaxWidth()) {
             Text("${hour.coerceIn(0, 23).toString().padStart(2, '0')}:${minute.coerceIn(0, 59).toString().padStart(2, '0')}")
         }
     }
 
-    if (showPicker) {
+    if (showPicker.value) {
         val timePickerState = rememberTimePickerState(
             initialHour = hour.coerceIn(0, 23),
             initialMinute = minute.coerceIn(0, 59),
             is24Hour = false,
         )
-        androidx.compose.material3.AlertDialog(
-            onDismissRequest = { showPicker = false },
+        AlertDialog(
+            onDismissRequest = { showPicker.value = false },
             confirmButton = {
                 TextButton(
                     onClick = {
@@ -241,14 +242,14 @@ private fun TimeSelector(
                         } else {
                             onTimeChange(selectedHour, selectedMinute)
                         }
-                        showPicker = false
+                        showPicker.value = false
                     },
                 ) {
                     Text("OK")
                 }
             },
             dismissButton = {
-                TextButton(onClick = { showPicker = false }) {
+                TextButton(onClick = { showPicker.value = false }) {
                     Text("Cancel")
                 }
             },
@@ -269,7 +270,7 @@ private fun DateSelector(
     onDateChange: (year: Int, month: Int, day: Int) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    var showPicker by remember { mutableStateOf(false) }
+    val showPicker = remember { mutableStateOf(false) }
     val timeZone = TimeZone.currentSystemDefault()
     val safeDate = runCatching {
         LocalDate(year.coerceIn(1970, 2100), month.coerceIn(1, 12), day.coerceIn(1, 31))
@@ -279,19 +280,19 @@ private fun DateSelector(
 
     Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Text(text = label, style = MaterialTheme.typography.titleSmall)
-        OutlinedButton(onClick = { showPicker = true }, modifier = Modifier.fillMaxWidth()) {
+        OutlinedButton(onClick = { showPicker.value = true }, modifier = Modifier.fillMaxWidth()) {
             Text(
                 "${safeDate.year}-${safeDate.month.number.toString().padStart(2, '0')}-${safeDate.day.toString().padStart(2, '0')}"
             )
         }
     }
 
-    if (showPicker) {
+    if (showPicker.value) {
         val datePickerState = rememberDatePickerState(
             initialSelectedDateMillis = safeDate.atStartOfDayIn(timeZone).toEpochMilliseconds(),
         )
         DatePickerDialog(
-            onDismissRequest = { showPicker = false },
+            onDismissRequest = { showPicker.value = false },
             confirmButton = {
                 TextButton(
                     onClick = {
@@ -308,14 +309,14 @@ private fun DateSelector(
                                 selectedDate.day,
                             )
                         }
-                        showPicker = false
+                        showPicker.value = false
                     },
                 ) {
                     Text("OK")
                 }
             },
             dismissButton = {
-                TextButton(onClick = { showPicker = false }) {
+                TextButton(onClick = { showPicker.value = false }) {
                     Text("Cancel")
                 }
             },
