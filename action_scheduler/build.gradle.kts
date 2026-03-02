@@ -100,6 +100,7 @@ kotlin {
         iosMain {
             dependencies {
                 implementation(libs.kmpworkmanager)
+                implementation(libs.room.runtime)
             }
         }
     }

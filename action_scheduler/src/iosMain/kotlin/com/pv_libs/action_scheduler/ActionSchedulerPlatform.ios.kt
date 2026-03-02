@@ -1,11 +1,13 @@
 package com.pv_libs.action_scheduler
 
 import androidx.room.Room
+import com.pv_libs.action_scheduler.internal.db.SchedulerRoomDatabase
 import com.pv_libs.action_scheduler.models.ActionConstraints
 import com.pv_libs.action_scheduler.models.WorkerDispatchResult
 import dev.brewkits.kmpworkmanager.KmpWorkManagerConfig
 import dev.brewkits.kmpworkmanager.background.data.IosWorker
 import dev.brewkits.kmpworkmanager.background.data.IosWorkerFactory
+import dev.brewkits.kmpworkmanager.background.data.NativeTaskScheduler
 import dev.brewkits.kmpworkmanager.background.domain.BackgroundTaskScheduler
 import dev.brewkits.kmpworkmanager.background.domain.BackoffPolicy
 import dev.brewkits.kmpworkmanager.background.domain.Constraints
@@ -15,9 +17,6 @@ import dev.brewkits.kmpworkmanager.background.domain.TaskTrigger
 import dev.brewkits.kmpworkmanager.background.domain.WorkerResult
 import dev.brewkits.kmpworkmanager.kmpWorkerModule
 import kotlinx.cinterop.ExperimentalForeignApi
-import org.koin.core.context.GlobalContext
-import org.koin.core.context.loadKoinModules
-import org.koin.core.context.startKoin
 import org.koin.core.module.Module
 import platform.Foundation.NSDocumentDirectory
 import platform.Foundation.NSFileManager
@@ -105,27 +104,10 @@ internal actual fun createPlatformSchedulerEngine(
         iosTaskIds = config.iosTaskIds,
     )
 
-    val global = GlobalContext.getOrNull()
-    if (global == null) {
-        startKoin {
-            modules(module)
-        }
-    } else {
-        loadKoinModules(module)
-    }
 
-    val scheduler = GlobalContext.get().koin.get<BackgroundTaskScheduler>()
-    return IosSchedulerEngine(scheduler)
-}
 
-internal actual fun createSchedulerSqlDriver(config: ActionSchedulerConfig): SqlDriver {
-    return NativeSqliteDriver(
-        schema = SchedulerDatabase.Schema,
-        name = "${config.storageName}.db",
-    )
+    return IosSchedulerEngine(NativeTaskScheduler())
 }
-import com.pv_libs.action_scheduler.internal.db.SchedulerRoomDatabase
-import com.pv_libs.action_scheduler.db.instantiateImpl
 
 @OptIn(ExperimentalForeignApi::class)
 private fun documentDirectory(): String {
@@ -143,8 +125,8 @@ internal actual fun createSchedulerDatabase(config: ActionSchedulerConfig): Sche
     val dbFilePath = documentDirectory() + "/${config.storageName}.db"
     return Room.databaseBuilder<SchedulerRoomDatabase>(
         name = dbFilePath,
-        factory = { SchedulerRoomDatabase::class.instantiateImpl() }
-    ).setDriver(bundledSQLiteDriver())
-     .fallbackToDestructiveMigration()
+    )
+        .setDriver(androidx.sqlite.driver.bundled.BundledSQLiteDriver())
+     .fallbackToDestructiveMigration(true)
      .build()
 }

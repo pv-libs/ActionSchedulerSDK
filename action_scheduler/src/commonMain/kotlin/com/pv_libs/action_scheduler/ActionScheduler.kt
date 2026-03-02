@@ -7,6 +7,8 @@ import com.pv_libs.action_scheduler.models.RegistrationResult
 import com.pv_libs.action_scheduler.models.RunStatus
 import com.pv_libs.action_scheduler.models.WorkerDispatchResult
 import kotlinx.coroutines.flow.Flow
+import org.koin.mp.KoinPlatformTools.synchronized
+import org.koin.mp.Lockable
 import kotlin.concurrent.Volatile
 
 private const val DEFAULT_STORAGE_NAME = "action_scheduler_sdk"
@@ -55,16 +57,18 @@ object ActionSchedulerKit {
     @Volatile
     private var instance: DefaultActionScheduler? = null
 
+    object Lock : Lockable()
+
     fun initialize(config: ActionSchedulerConfig = ActionSchedulerConfig()): ActionScheduler {
         instance?.let { return it }
 
-        synchronized(initLock) {
-            instance?.let { return it }
+        return synchronized(Lock) {
+            instance?.let { return@let it }
 
             val scheduler = DefaultActionScheduler(config)
             scheduler.warmStart()
             instance = scheduler
-            return scheduler
+            return@synchronized scheduler
         }
     }
 

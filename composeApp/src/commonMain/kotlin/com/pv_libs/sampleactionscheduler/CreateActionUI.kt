@@ -33,6 +33,7 @@ import kotlinx.datetime.number
 import kotlinx.datetime.atStartOfDayIn
 import kotlinx.datetime.toLocalDateTime
 import kotlin.time.Clock
+import kotlin.time.Instant
 
 @Stable
 class CreateActionUIState {
@@ -277,7 +278,7 @@ private fun DateSelector(
         Text(text = label, style = MaterialTheme.typography.titleSmall)
         OutlinedButton(onClick = { showPicker = true }, modifier = Modifier.fillMaxWidth()) {
             Text(
-                "${safeDate.year}-${safeDate.monthNumber.toString().padStart(2, '0')}-${safeDate.dayOfMonth.toString().padStart(2, '0')}"
+                "${safeDate.year}-${safeDate.month.number.toString().padStart(2, '0')}-${safeDate.day.toString().padStart(2, '0')}"
             )
         }
     }
@@ -293,15 +294,15 @@ private fun DateSelector(
                     onClick = {
                         val selectedDate = datePickerState.selectedDateMillis
                             ?.let { millis ->
-                                kotlinx.datetime.Instant.fromEpochMilliseconds(millis)
+                                Instant.fromEpochMilliseconds(millis)
                                     .toLocalDateTime(timeZone)
                                     .date
                             }
                         if (selectedDate != null) {
                             onDateChange(
                                 selectedDate.year,
-                                selectedDate.monthNumber,
-                                selectedDate.dayOfMonth,
+                                selectedDate.month.number,
+                                selectedDate.day,
                             )
                         }
                         showPicker = false

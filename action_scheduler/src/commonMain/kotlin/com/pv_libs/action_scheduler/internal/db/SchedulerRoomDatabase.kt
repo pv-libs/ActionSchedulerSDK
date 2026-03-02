@@ -1,9 +1,11 @@
 package com.pv_libs.action_scheduler.internal.db
 
+import androidx.room.ConstructedBy
 import androidx.room.Dao
 import androidx.room.Database
 import androidx.room.Query
 import androidx.room.RoomDatabase
+import androidx.room.RoomDatabaseConstructor
 import androidx.room.TypeConverter
 import androidx.room.TypeConverters
 import androidx.room.Upsert
@@ -57,6 +59,14 @@ interface SchedulerDao {
     suspend fun deleteOverflowExecutions(keep: Long)
 }
 
+expect fun getDatabaseBuilder(): RoomDatabase.Builder<SchedulerRoomDatabase>
+
+@Suppress("KotlinNoActualForExpect")
+expect object SchedulerRoomDatabaseConstructor : RoomDatabaseConstructor<SchedulerRoomDatabase> {
+    override fun initialize(): SchedulerRoomDatabase
+}
+
+@ConstructedBy(SchedulerRoomDatabaseConstructor::class)
 @Database(entities = [ActionScheduleEntity::class, ActionExecutionEntity::class], version = 3)
 @TypeConverters(InstantConverter::class)
 abstract class SchedulerRoomDatabase : RoomDatabase() {

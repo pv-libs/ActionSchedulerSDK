@@ -46,7 +46,6 @@ fun HomeScreen() {
     MaterialTheme {
         val scope = rememberCoroutineScope()
         var statusMessage by remember { mutableStateOf("Idle") }
-        val createActionState = remember { CreateActionUIState() }
         var showCreateActionSheet by remember { mutableStateOf(false) }
         val permissionHandler = rememberNotificationPermissionHandler()
 
@@ -153,6 +152,7 @@ fun HomeScreen() {
                 }
 
                 if (showCreateActionSheet) {
+                    val createActionState = remember { CreateActionUIState() }
                     ModalBottomSheet(
                         sheetState = rememberModalBottomSheetState(true),
                         onDismissRequest = { showCreateActionSheet = false },

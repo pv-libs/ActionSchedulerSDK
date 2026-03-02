@@ -34,6 +34,7 @@ private fun showNotification(notification: ActionNotification) {
         setTitle(notification.title)
         setBody(notification.message)
         // Note: userInfo takes Map<Any?, Any>, so we cast the string map
+        @Suppress("UNCHECKED_CAST")
         setUserInfo(notification.payload as Map<Any?, *>)
     }
     val trigger = UNTimeIntervalNotificationTrigger.triggerWithTimeInterval(1.0, false)

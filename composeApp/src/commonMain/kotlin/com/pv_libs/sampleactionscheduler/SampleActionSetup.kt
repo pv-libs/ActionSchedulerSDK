@@ -89,8 +89,8 @@ suspend fun scheduleCustomAction(
         ReminderRecurrence.ONE_TIME -> {
             val dateTime = LocalDateTime(
                 year = input.oneTimeYear,
-                monthNumber = input.oneTimeMonth,
-                dayOfMonth = input.oneTimeDay,
+                month = input.oneTimeMonth,
+                day = input.oneTimeDay,
                 hour = input.hour,
                 minute = input.minute,
             )
