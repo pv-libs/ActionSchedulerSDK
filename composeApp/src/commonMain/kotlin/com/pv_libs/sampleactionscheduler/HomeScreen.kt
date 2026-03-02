@@ -3,6 +3,7 @@ package com.pv_libs.sampleactionscheduler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -105,11 +106,25 @@ fun HomeScreen() {
                         )
                     }
                     items(registeredActions.value) { log ->
-                        Text(
-                            text = "actionId: ${log.actionId}\n\n$log",
-                            style = MaterialTheme.typography.bodySmall,
-                            modifier = Modifier.padding(16.dp)
-                        )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "actionId: ${log.actionId}\n\n$log",
+                                style = MaterialTheme.typography.bodySmall,
+                                modifier = Modifier.padding(16.dp)
+                                    .weight(1f)
+                            )
+                            Button(onClick = {
+                                scope.launch {
+                                    cancelCustomAction(scheduler, log.actionId)
+                                    statusMessage = "Cancelled action: ${log.actionId}"
+                                }
+                            }) {
+                                Text("delete")
+                            }
+                        }
+
                     }
                     stickyHeader {
                         Text(
@@ -153,8 +168,9 @@ fun HomeScreen() {
 
                 if (showCreateActionSheet) {
                     val createActionState = remember { CreateActionUIState() }
+                    val bottomSheetState = rememberModalBottomSheetState(true)
                     ModalBottomSheet(
-                        sheetState = rememberModalBottomSheetState(true),
+                        sheetState = bottomSheetState,
                         onDismissRequest = { showCreateActionSheet = false },
                     ) {
                         CreateActionUI(
@@ -169,6 +185,9 @@ fun HomeScreen() {
                                         statusMessage = it
                                     }
                                 )
+                                scope.launch {
+                                    bottomSheetState.hide()
+                                }
                             },
                             onCancelClick = {
                                 val trimmedName = createActionState.actionName.trim()
@@ -239,13 +258,7 @@ private fun createAction(
                         oneTimeDay = oneTimeDay,
                     )
                 )
-                val recurringHint =
-                    if (createActionState.recurrence == ReminderRecurrence.BI_WEEKLY) {
-                        " (BI_WEEKLY uses weekly cadence in current SDK sample)"
-                    } else {
-                        ""
-                    }
-                updateState(result.toStatusLabel(trimmedName) + recurringHint)
+                updateState(result.toStatusLabel(trimmedName))
             }
         } else {
             updateState("Notification permission denied")

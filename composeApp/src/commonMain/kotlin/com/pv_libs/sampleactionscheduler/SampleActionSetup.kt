@@ -66,7 +66,7 @@ suspend fun scheduleCustomAction(
     input: CustomReminderInput,
 ): RegistrationResult {
     val actionName = input.actionName.trim()
-    val recurrenceRule = when (input.recurrence) {
+    val recurrenceRule = when (val recurrence = input.recurrence) {
         ReminderRecurrence.DAILY -> RecurrenceRule.Daily(
             hour = input.hour,
             minute = input.minute,
@@ -78,6 +78,7 @@ suspend fun scheduleCustomAction(
             dayOfWeekIso = input.dayOfWeekIso,
             hour = input.hour,
             minute = input.minute,
+            skipWeeks = if(recurrence == ReminderRecurrence.WEEKLY) 0 else 1
         )
 
         ReminderRecurrence.MONTHLY -> RecurrenceRule.Monthly(

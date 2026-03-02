@@ -44,6 +44,7 @@ sealed interface RecurrenceRule {
         val dayOfWeekIso: Int,
         val hour: Int,
         val minute: Int,
+        val skipWeeks: Int,
     ) : RecurrenceRule
 
     @Serializable

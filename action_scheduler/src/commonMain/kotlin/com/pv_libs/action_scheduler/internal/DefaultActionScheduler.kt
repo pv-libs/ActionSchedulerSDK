@@ -513,7 +513,7 @@ internal class DefaultActionScheduler(
 
                 var daysUntil = targetDay.isoDayNumber - nowLocal.date.dayOfWeek.isoDayNumber
                 if (daysUntil < 0) daysUntil += 7
-
+                daysUntil += (rule.skipWeeks * 7) // skipping weeks to support bi-weekly, tri-weekly
                 var candidateDate = nowLocal.date.plus(DatePeriod(days = daysUntil))
                 var candidate = LocalDateTime(candidateDate, time)
 
