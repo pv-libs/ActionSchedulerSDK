@@ -77,5 +77,6 @@ android {
 
 dependencies {
     debugImplementation(libs.compose.uiTooling)
+    implementation(project(":action_scheduler"))
 }
 

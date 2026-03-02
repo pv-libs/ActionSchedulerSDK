@@ -7,6 +7,7 @@ import com.pv_libs.action_scheduler.models.WorkerDispatchResult
 import dev.brewkits.kmpworkmanager.KmpWorkManagerConfig
 import dev.brewkits.kmpworkmanager.background.data.IosWorker
 import dev.brewkits.kmpworkmanager.background.data.IosWorkerFactory
+import dev.brewkits.kmpworkmanager.background.data.SingleTaskExecutor
 import dev.brewkits.kmpworkmanager.background.domain.BackgroundTaskScheduler
 import dev.brewkits.kmpworkmanager.background.domain.ExistingPolicy
 import dev.brewkits.kmpworkmanager.background.domain.ScheduleResult
@@ -16,13 +17,24 @@ import dev.brewkits.kmpworkmanager.kmpWorkerModule
 import dev.brewkits.kmpworkmanager.utils.CustomLogger
 import dev.brewkits.kmpworkmanager.utils.Logger
 import kotlinx.cinterop.ExperimentalForeignApi
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import org.koin.core.context.loadKoinModules
 import org.koin.core.context.startKoin
 import org.koin.core.module.Module
 import org.koin.mp.KoinPlatformTools
+import platform.BackgroundTasks.BGTaskScheduler
+import platform.Foundation.NSApplicationSupportDirectory
 import platform.Foundation.NSDocumentDirectory
 import platform.Foundation.NSFileManager
+import platform.Foundation.NSString
 import platform.Foundation.NSUserDomainMask
+import platform.Foundation.NSUTF8StringEncoding
+import platform.Foundation.NSUserDefaults
+import platform.Foundation.valueForKey
+import platform.Foundation.writeToFile
 import kotlin.concurrent.Volatile
 
 private class IosSchedulerEngine(
@@ -34,19 +46,71 @@ private class IosSchedulerEngine(
         executionPayload: String,
         constraints: ActionConstraints,
     ): Boolean {
-        val result = scheduler.enqueue(
-            id = runnerTaskId,
-            trigger = TaskTrigger.OneTime(initialDelayMs = delayMs.coerceAtLeast(0L)),
-            workerClassName = SDK_WORKER_CLASS_NAME,
-            inputJson = executionPayload,
-            policy = ExistingPolicy.REPLACE,
-        )
+        val result = runCatching {
+            enqueueRunnerTask(runnerTaskId, delayMs, executionPayload)
+        }.getOrElse { throwable ->
+            if (!isKnownIosMetadataBootstrapCrash(throwable)) throw throwable
+
+            seedKmpWorkManagerTaskMetadata(runnerTaskId)
+            enqueueRunnerTask(runnerTaskId, delayMs, executionPayload)
+        }
 
         return result == ScheduleResult.ACCEPTED
     }
 
     override fun cancelRunner(runnerTaskId: String) {
         scheduler.cancel(runnerTaskId)
+    }
+
+    private suspend fun enqueueRunnerTask(
+        runnerTaskId: String,
+        delayMs: Long,
+        executionPayload: String,
+    ): ScheduleResult {
+        return scheduler.enqueue(
+            id = runnerTaskId,
+            trigger = TaskTrigger.OneTime(initialDelayMs = delayMs.coerceAtLeast(0L)),
+            workerClassName = SDK_WORKER_CLASS_NAME,
+            inputJson = executionPayload,
+            policy = ExistingPolicy.REPLACE,
+        )
+    }
+
+    private fun isKnownIosMetadataBootstrapCrash(throwable: Throwable): Boolean {
+        return throwable is IllegalStateException &&
+            throwable.message?.contains("File coordination callback did not execute") == true
+    }
+
+    @OptIn(ExperimentalForeignApi::class)
+    private fun seedKmpWorkManagerTaskMetadata(taskId: String) {
+        runCatching {
+            val fileManager = NSFileManager.defaultManager
+            val appSupportUrl = (fileManager.URLsForDirectory(
+                NSApplicationSupportDirectory,
+                NSUserDomainMask,
+            ) as List<*>).firstOrNull() as? platform.Foundation.NSURL ?: return
+            val baseDir = appSupportUrl.URLByAppendingPathComponent("dev.brewkits.kmpworkmanager") ?: return
+            val metadataDir = baseDir.URLByAppendingPathComponent("metadata") ?: return
+            val tasksDir = metadataDir.URLByAppendingPathComponent("tasks") ?: return
+
+            fileManager.createDirectoryAtURL(
+                tasksDir,
+                withIntermediateDirectories = true,
+                attributes = null,
+                error = null,
+            )
+
+            val metaFile = tasksDir.URLByAppendingPathComponent("$taskId.json") ?: return
+            val path = metaFile.path ?: return
+            if (!fileManager.fileExistsAtPath(path)) {
+                ("{}" as NSString).writeToFile(
+                    path,
+                    atomically = true,
+                    encoding = NSUTF8StringEncoding,
+                    error = null,
+                )
+            }
+        }
     }
 }
 
@@ -120,8 +184,27 @@ internal actual fun createPlatformSchedulerEngine(
     }
 
     val scheduler = context.get().get<BackgroundTaskScheduler>()
+    return IosSchedulerEngine(scheduler).apply {
+        registerBackgroundTasks()
+    }
+}
+private val executor = SingleTaskExecutor(IosDispatchWorkerFactory)
+private val coroutineScope = CoroutineScope(Dispatchers.Default + SupervisorJob())
 
-    return IosSchedulerEngine(scheduler)
+private fun registerBackgroundTasks(){
+    BGTaskScheduler.sharedScheduler.registerForTaskWithIdentifier(
+        "com.pv_libs.sampleactionscheduler.action_executor",
+        null
+    ) { task ->
+        task ?: return@registerForTaskWithIdentifier
+        coroutineScope.launch {
+            val meta = NSUserDefaults.standardUserDefaults.valueForKey("kmp_task_meta_${task.identifier}") as Map<String, String>
+            val workerClassName = meta["workerClassName"] ?: ""
+            val inputJson = meta["inputJson"]
+
+            executor.executeTask(workerClassName, inputJson, 25000)
+        }
+    }
 }
 
 @OptIn(ExperimentalForeignApi::class)
