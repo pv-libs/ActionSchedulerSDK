@@ -10,7 +10,7 @@ import kotlin.concurrent.Volatile
 
 private const val DEFAULT_STORAGE_NAME = "action_scheduler_sdk"
 private const val DEFAULT_MAX_LOGS = 500
-internal const val SDK_RUNNER_TASK_ID = "com.pv_libs.action_scheduler.runner"
+internal const val SDK_RUNNER_TASK_ID = "kmp_chain_executor_task"
 internal const val SDK_WORKER_CLASS_NAME = "ActionSchedulerDispatchWorker"
 
 

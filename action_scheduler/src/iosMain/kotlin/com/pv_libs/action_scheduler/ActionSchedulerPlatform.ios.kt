@@ -13,6 +13,8 @@ import dev.brewkits.kmpworkmanager.background.domain.ScheduleResult
 import dev.brewkits.kmpworkmanager.background.domain.TaskTrigger
 import dev.brewkits.kmpworkmanager.background.domain.WorkerResult
 import dev.brewkits.kmpworkmanager.kmpWorkerModule
+import dev.brewkits.kmpworkmanager.utils.CustomLogger
+import dev.brewkits.kmpworkmanager.utils.Logger
 import kotlinx.cinterop.ExperimentalForeignApi
 import org.koin.core.context.loadKoinModules
 import org.koin.core.context.startKoin
@@ -89,7 +91,21 @@ internal actual fun createPlatformSchedulerEngine(
 
     val module: Module = kmpWorkerModule(
         workerFactory = IosDispatchWorkerFactory,
-        config = KmpWorkManagerConfig(),
+        config = KmpWorkManagerConfig(logLevel = Logger.Level.DEBUG_LEVEL, object: CustomLogger {
+
+            override fun log(
+                level: Logger.Level,
+                tag: String,
+                message: String,
+                throwable: Throwable?
+            ) {
+                logger("level: $level, tag: $tag, message: $message, throwable: $throwable")
+                throwable?.let {
+                    logger("Throwable: $it")
+                    logger("Throwable: ${it.stackTraceToString()}")
+                }
+            }
+        }),
         iosTaskIds = config.iosTaskIds,
     )
 

@@ -74,7 +74,7 @@
  
  Also update your iOS `Info.plist` (see sample [`iosApp/iosApp/Info.plist`](./iosApp/iosApp/Info.plist)):
  
- - **`BGTaskSchedulerPermittedIdentifiers`** includes `com.pv_libs.action_scheduler.runner`
+ - **`BGTaskSchedulerPermittedIdentifiers`** includes `kmp_chain_executor_task`
  - **`UIBackgroundModes`** includes `processing`
  
  ---

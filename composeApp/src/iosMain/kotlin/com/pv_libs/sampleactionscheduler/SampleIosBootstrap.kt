@@ -9,7 +9,7 @@ import platform.UserNotifications.UNNotificationRequest
 import platform.UserNotifications.UNTimeIntervalNotificationTrigger
 import platform.UserNotifications.UNUserNotificationCenter
 
-private const val IOS_RUNNER_TASK_ID = "com.pv_libs.action_scheduler.runner"
+private const val IOS_RUNNER_TASK_ID = "kmp_chain_executor_task"
 
 fun initializeSampleActionSchedulerIos() {
     initializeActionSchedulerIos(taskIds = listOf(IOS_RUNNER_TASK_ID))
