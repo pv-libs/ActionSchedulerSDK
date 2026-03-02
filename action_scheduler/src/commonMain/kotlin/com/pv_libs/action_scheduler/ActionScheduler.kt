@@ -52,24 +52,17 @@ data class ActionSchedulerConfig(
 )
 
 object ActionSchedulerKit {
-    private val initLock = Any()
 
     @Volatile
     private var instance: DefaultActionScheduler? = null
 
-    object Lock : Lockable()
-
     fun initialize(config: ActionSchedulerConfig = ActionSchedulerConfig()): ActionScheduler {
         instance?.let { return it }
+        val scheduler = DefaultActionScheduler(config)
+        scheduler.warmStart()
+        instance = scheduler
 
-        return synchronized(Lock) {
-            instance?.let { return@let it }
-
-            val scheduler = DefaultActionScheduler(config)
-            scheduler.warmStart()
-            instance = scheduler
-            return@synchronized scheduler
-        }
+        return scheduler
     }
 
     fun getOrNull(): ActionScheduler? = instance

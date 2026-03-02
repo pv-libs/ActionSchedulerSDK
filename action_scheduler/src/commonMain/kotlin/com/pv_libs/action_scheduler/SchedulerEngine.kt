@@ -6,13 +6,13 @@ import com.pv_libs.action_scheduler.models.WorkerDispatchResult
 
 internal interface SchedulerEngine {
     suspend fun scheduleRunner(
-        executionId: String,
+        runnerTaskId: String,
         delayMs: Long,
-        inputJson: String,
+        executionPayload: String,
         constraints: ActionConstraints,
     ): Boolean
 
-    fun cancelRunner(executionId: String)
+    fun cancelRunner(runnerTaskId: String)
 }
 
 internal expect fun createPlatformSchedulerEngine(

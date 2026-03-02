@@ -21,35 +21,29 @@ private class AndroidSchedulerEngine(
     private val scheduler: BackgroundTaskScheduler,
 ) : SchedulerEngine {
     override suspend fun scheduleRunner(
-        executionId: String,
+        runnerTaskId: String,
         delayMs: Long,
-        inputJson: String,
+        executionPayload: String,
         constraints: ActionConstraints,
     ): Boolean {
         val scheduleResult = scheduler.enqueue(
-            id = executionId,
+            id = runnerTaskId,
             trigger = TaskTrigger.OneTime(initialDelayMs = delayMs.coerceAtLeast(0L)),
             workerClassName = SDK_WORKER_CLASS_NAME,
             constraints = Constraints(
                 requiresNetwork = constraints.requiresNetwork,
-                requiresCharging = constraints.requiresCharging,
                 isHeavyTask = constraints.isHeavyTask,
-                backoffPolicy = if (constraints.exponentialBackoff) {
-                    BackoffPolicy.EXPONENTIAL
-                } else {
-                    BackoffPolicy.LINEAR
-                },
                 backoffDelayMs = constraints.backoffDelayMs,
             ),
-            inputJson = inputJson,
+            inputJson = executionPayload,
             policy = ExistingPolicy.REPLACE,
         )
 
         return scheduleResult == ScheduleResult.ACCEPTED
     }
 
-    override fun cancelRunner(executionId: String) {
-        scheduler.cancel(executionId)
+    override fun cancelRunner(runnerTaskId: String) {
+        scheduler.cancel(runnerTaskId)
     }
 }
 

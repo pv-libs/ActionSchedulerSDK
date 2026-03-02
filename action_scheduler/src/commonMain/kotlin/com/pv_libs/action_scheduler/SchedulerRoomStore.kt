@@ -44,6 +44,24 @@ internal class SchedulerRoomStore(
         }
     }
 
+    suspend fun getSchedule(actionId: String): ActionSpec? {
+        val row = dao.getSchedule(actionId) ?: return null
+        return runCatching {
+            ActionSpec(
+                actionId = row.id,
+                actionType = row.actionType,
+                payloadJson = row.payloadJson,
+                recurrence = schedulerJson.decodeFromString<RecurrenceRule>(row.recurrenceRuleJson),
+                timezoneId = row.timezoneId,
+                notificationOffsetMinutes = row.notificationOffsetMinutes,
+                notificationTitle = row.notificationTitle,
+                notificationDescription = row.notificationDescription,
+                enabled = row.enabled,
+                constraints = schedulerJson.decodeFromString<ActionConstraints>(row.constraintsJson)
+            )
+        }.getOrNull()
+    }
+
     fun getAllSchedulesFlow() = dao.getAllSchedulesFlow().map {
         it.mapNotNull { row ->
             runCatching {
@@ -114,6 +132,10 @@ internal class SchedulerRoomStore(
 
     suspend fun getPendingExecutions(): List<ActionExecutionEntity> {
         return dao.getExecutionsByStatus(RunStatus.PENDING.name)
+    }
+
+    suspend fun getNearestPendingExecution(): ActionExecutionEntity? {
+        return dao.getNearestExecutionByStatus(RunStatus.PENDING.name)
     }
 
     private suspend fun trimLogs(maxEntries: Int) {

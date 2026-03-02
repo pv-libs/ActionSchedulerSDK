@@ -7,17 +7,19 @@ import com.pv_libs.action_scheduler.models.WorkerDispatchResult
 import dev.brewkits.kmpworkmanager.KmpWorkManagerConfig
 import dev.brewkits.kmpworkmanager.background.data.IosWorker
 import dev.brewkits.kmpworkmanager.background.data.IosWorkerFactory
-import dev.brewkits.kmpworkmanager.background.data.NativeTaskScheduler
 import dev.brewkits.kmpworkmanager.background.domain.BackgroundTaskScheduler
-import dev.brewkits.kmpworkmanager.background.domain.BackoffPolicy
-import dev.brewkits.kmpworkmanager.background.domain.Constraints
 import dev.brewkits.kmpworkmanager.background.domain.ExistingPolicy
 import dev.brewkits.kmpworkmanager.background.domain.ScheduleResult
 import dev.brewkits.kmpworkmanager.background.domain.TaskTrigger
 import dev.brewkits.kmpworkmanager.background.domain.WorkerResult
 import dev.brewkits.kmpworkmanager.kmpWorkerModule
+import kotlinx.coroutines.Dispatchers
 import kotlinx.cinterop.ExperimentalForeignApi
+import kotlinx.coroutines.withContext
+import org.koin.core.context.loadKoinModules
+import org.koin.core.context.startKoin
 import org.koin.core.module.Module
+import org.koin.mp.KoinPlatformTools
 import platform.Foundation.NSDocumentDirectory
 import platform.Foundation.NSFileManager
 import platform.Foundation.NSUserDomainMask
@@ -27,35 +29,24 @@ private class IosSchedulerEngine(
     private val scheduler: BackgroundTaskScheduler,
 ) : SchedulerEngine {
     override suspend fun scheduleRunner(
-        executionId: String,
+        runnerTaskId: String,
         delayMs: Long,
-        inputJson: String,
+        executionPayload: String,
         constraints: ActionConstraints,
     ): Boolean {
         val result = scheduler.enqueue(
-            id = executionId,
+            id = runnerTaskId,
             trigger = TaskTrigger.OneTime(initialDelayMs = delayMs.coerceAtLeast(0L)),
             workerClassName = SDK_WORKER_CLASS_NAME,
-            constraints = Constraints(
-                requiresNetwork = constraints.requiresNetwork,
-                requiresCharging = constraints.requiresCharging,
-                isHeavyTask = constraints.isHeavyTask,
-                backoffPolicy = if (constraints.exponentialBackoff) {
-                    BackoffPolicy.EXPONENTIAL
-                } else {
-                    BackoffPolicy.LINEAR
-                },
-                backoffDelayMs = constraints.backoffDelayMs,
-            ),
-            inputJson = inputJson,
+            inputJson = executionPayload,
             policy = ExistingPolicy.REPLACE,
         )
 
         return result == ScheduleResult.ACCEPTED
     }
 
-    override fun cancelRunner(executionId: String) {
-        scheduler.cancel(executionId)
+    override fun cancelRunner(runnerTaskId: String) {
+        scheduler.cancel(runnerTaskId)
     }
 }
 
@@ -104,9 +95,19 @@ internal actual fun createPlatformSchedulerEngine(
         iosTaskIds = config.iosTaskIds,
     )
 
+    val context = KoinPlatformTools.defaultContext()
 
+    if (context.getOrNull() == null) {
+        startKoin {
+            modules(module)
+        }
+    } else {
+        loadKoinModules(module)
+    }
 
-    return IosSchedulerEngine(NativeTaskScheduler())
+    val scheduler = context.get().get<BackgroundTaskScheduler>()
+
+    return IosSchedulerEngine(scheduler)
 }
 
 @OptIn(ExperimentalForeignApi::class)

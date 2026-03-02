@@ -12,6 +12,7 @@ import com.pv_libs.action_scheduler.ActionNotification
 import com.pv_libs.action_scheduler.ActionSchedulerConfig
 import com.pv_libs.action_scheduler.ActionSchedulerKit
 import com.pv_libs.action_scheduler.NotificationHandler
+import com.pv_libs.action_scheduler.logger
 
 class SampleActionSchedulerApp : Application() {
 
@@ -19,18 +20,23 @@ class SampleActionSchedulerApp : Application() {
         super.onCreate()
 
         createNotificationChannel()
-
-        val scheduler = ActionSchedulerKit.initialize(
-            ActionSchedulerConfig(
-                platformContext = this,
-            )
-        )
-
         val notificationHandler: NotificationHandler = { notification ->
             showNotification(notification)
         }
-        registerSampleActionHandlers(scheduler, notificationHandler)
-        scheduler.setNotificationHandler(notificationHandler)
+
+        try {
+            val scheduler = ActionSchedulerKit.initialize(
+                ActionSchedulerConfig(
+                    platformContext = this,
+                )
+            )
+
+            registerSampleActionHandlers(scheduler, notificationHandler)
+            scheduler.setNotificationHandler(notificationHandler)
+        } catch (ex: Exception){
+            logger(ex.toString())
+        }
+
     }
 
     fun showNotification(notification: ActionNotification) {

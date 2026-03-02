@@ -7,6 +7,7 @@ import com.pv_libs.action_scheduler.ActionScheduler
 import com.pv_libs.action_scheduler.ActionSchedulerConfig
 import com.pv_libs.action_scheduler.ActionSchedulerKit
 import com.pv_libs.action_scheduler.NotificationHandler
+import com.pv_libs.action_scheduler.SDK_RUNNER_TASK_ID
 import com.pv_libs.action_scheduler.SchedulerRoomStore
 import com.pv_libs.action_scheduler.createPlatformSchedulerEngine
 import com.pv_libs.action_scheduler.createSchedulerDatabase
@@ -26,8 +27,10 @@ import kotlinx.coroutines.IO
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import kotlinx.datetime.DatePeriod
 import kotlinx.datetime.DayOfWeek
 import kotlinx.datetime.LocalDate
@@ -46,12 +49,14 @@ import kotlin.time.Instant
 
 private const val MAX_RETRIES = 3
 private const val REMINDER_SUFFIX = "-reminder"
+private val RETRY_SUFFIX_REGEX = Regex("-retry\\d+$")
+private const val UNKNOWN_SCHEDULE_ID = "unknown"
 
 internal class DefaultActionScheduler(
     private val config: ActionSchedulerConfig,
 ) : ActionScheduler {
     private val mutex = Mutex()
-    private val coroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val coroutineScope = CoroutineScope(SupervisorJob())
     private val sqlStore = SchedulerRoomStore(
         database = createSchedulerDatabase(config),
         maxExecutionLogs = config.maxExecutionLogs,
@@ -66,35 +71,44 @@ internal class DefaultActionScheduler(
     )
 
     fun warmStart() {
-        coroutineScope.launch {
-            mutex.withLock {
-                val pendingExecutions = sqlStore.getPendingExecutions()
-                for (execution in pendingExecutions) {
-                    val schedule = sqlStore.getAllSchedules().firstOrNull { it.actionId == execution.scheduleId }
-                    if (schedule != null && schedule.enabled) {
-                        scheduleWorker(execution, schedule)
-                    }
-                }
+        runBlocking {
+            reconcileSingleRunner()
+        }
+    }
+
+    override suspend fun registerAction(spec: ActionSpec): RegistrationResult {
+        val result = mutex.withLock {
+            if (!validate(spec)) return@withLock RegistrationResult.REJECTED_INVALID_PARAMS
+
+            sqlStore.upsertSchedule(spec)
+            scheduleNextForAction(spec, Clock.System.now())
+            RegistrationResult.ACCEPTED
+        }
+
+        if (result == RegistrationResult.ACCEPTED) {
+            reconcileSingleRunner()
+        }
+
+        return result
+    }
+
+    override suspend fun cancelAction(actionId: String): Unit {
+        mutex.withLock {
+            sqlStore.deleteSchedule(actionId)
+            val pending = sqlStore.getPendingExecutions().filter { it.scheduleId == actionId }
+            val endedAt = Clock.System.now()
+            for (execution in pending) {
+                sqlStore.upsertExecution(
+                    execution.copy(
+                        status = RunStatus.FAILED,
+                        endedAt = endedAt,
+                        errorMessage = "Canceled",
+                    )
+                )
             }
         }
-    }
 
-    override suspend fun registerAction(spec: ActionSpec): RegistrationResult = mutex.withLock {
-        if (!validate(spec)) return@withLock RegistrationResult.REJECTED_INVALID_PARAMS
-
-        sqlStore.upsertSchedule(spec)
-        scheduleNextForAction(spec, Clock.System.now())
-
-        RegistrationResult.ACCEPTED
-    }
-
-    override suspend fun cancelAction(actionId: String): Unit = mutex.withLock {
-        sqlStore.deleteSchedule(actionId)
-        val pending = sqlStore.getPendingExecutions().filter { it.scheduleId == actionId }
-        for (execution in pending) {
-            schedulerEngine.cancelRunner(execution.id)
-            sqlStore.upsertExecution(execution.copy(status = RunStatus.FAILED, errorMessage = "Canceled"))
-        }
+        reconcileSingleRunner()
     }
 
     override fun getRegisteredActions(): Flow<List<ActionSpec>> = sqlStore.getAllSchedulesFlow()
@@ -111,110 +125,116 @@ internal class DefaultActionScheduler(
     }
 
     suspend fun dispatch(inputJson: String?): WorkerDispatchResult {
-        if (inputJson == null) return WorkerDispatchResult(success = false, message = "No execution ID provided")
+        try {
+            if (inputJson == null) return WorkerDispatchResult(success = false, message = "No execution ID provided")
 
-        val executionId = inputJson // We pass the executionId directly as the payload now
+            val executionId = inputJson
+            val execution = mutex.withLock { sqlStore.getExecution(executionId) }
+            if (execution == null) {
+                markExecutionNotFound(executionId)
+                return WorkerDispatchResult(success = true, message = "Execution $executionId not found")
+            }
 
-        val execution = mutex.withLock { sqlStore.getExecution(executionId) }
-            ?: return WorkerDispatchResult(success = false, message = "Execution $executionId not found")
+            if (execution.status != RunStatus.PENDING) {
+                return WorkerDispatchResult(success = true, message = "Execution already processed")
+            }
 
-        if (execution.status != RunStatus.PENDING) {
-            return WorkerDispatchResult(success = true, message = "Execution already processed")
-        }
+            val schedule = mutex.withLock { sqlStore.getSchedule(execution.scheduleId) }
+            if (schedule == null) {
+                updateExecutionStatus(executionId, RunStatus.FAILED, errorMessage = "Schedule not found")
+                return WorkerDispatchResult(success = false, message = "Schedule not found")
+            }
 
-        val schedule = mutex.withLock { sqlStore.getAllSchedules().firstOrNull { it.actionId == execution.scheduleId } }
-        if (schedule == null) {
-            updateExecutionStatus(executionId, RunStatus.FAILED, errorMessage = "Schedule not found")
-            return WorkerDispatchResult(success = false, message = "Schedule not found")
-        }
+            val startedAt = Clock.System.now()
+            mutex.withLock {
+                sqlStore.upsertExecution(execution.copy(status = RunStatus.RUNNING, startedAt = startedAt))
+            }
 
-        val startedAt = Clock.System.now()
-        mutex.withLock {
-            sqlStore.upsertExecution(execution.copy(status = RunStatus.RUNNING, startedAt = startedAt))
-        }
+            if (isReminderExecution(execution.id)) {
+                return dispatchReminder(executionId = executionId, schedule = schedule, startedAt = startedAt)
+            }
 
-        if (isReminderExecution(execution.id)) {
-            return dispatchReminder(executionId = executionId, schedule = schedule, startedAt = startedAt)
-        }
+            val handler = handlers[schedule.actionType]
+            if (handler == null) {
+                updateExecutionStatus(executionId, RunStatus.HANDLER_NOT_FOUND, errorMessage = "No handler for ${schedule.actionType}", startedAt = startedAt)
+                scheduleNextRecurrence(schedule)
+                return WorkerDispatchResult(success = false, shouldRetry = false)
+            }
 
-        // TODO: Handle Notifications based on execution metadata if needed.
-        // For this refactor, we focus on the primary action execution.
-
-        val handler = handlers[schedule.actionType]
-        if (handler == null) {
-            updateExecutionStatus(executionId, RunStatus.HANDLER_NOT_FOUND, errorMessage = "No handler for ${schedule.actionType}", startedAt = startedAt)
-            scheduleNextRecurrence(schedule)
-            return WorkerDispatchResult(success = false, shouldRetry = false)
-        }
-
-        return try {
-            when (
-                val result = handler.onExecute(
-                    ActionInvocation(
-                        actionId = schedule.actionId,
-                        actionType = schedule.actionType,
-                        payloadJson = schedule.payloadJson,
-                        scheduledAt = execution.scheduledAt,
-                    )
-                )
-            ) {
-                ActionHandlerResult.Success -> {
-                    updateExecutionStatus(executionId, RunStatus.SUCCESS, startedAt = startedAt)
-                    scheduleNextRecurrence(schedule)
-                    WorkerDispatchResult(success = true)
-                }
-
-                is ActionHandlerResult.Failure -> {
-                    val attempt = execution.retryCount
-                    val shouldRetry = result.retryable && attempt < MAX_RETRIES
-
-                    if (shouldRetry) {
-                        val nextDelay = nextBackoffDelay(schedule.constraints, attempt)
-                        val rescheduledAt = Clock.System.now().plus(kotlin.time.Duration.parse("${nextDelay}ms"))
-
-                        // Reschedule existing execution
-                        val updatedExecution = execution.copy(
-                            scheduledAt = rescheduledAt,
-                            status = RunStatus.PENDING,
-                            retryCount = attempt + 1,
-                            startedAt = null // Reset start time for next attempt
+            return try {
+                when (
+                    val result = handler.onExecute(
+                        ActionInvocation(
+                            actionId = schedule.actionId,
+                            actionType = schedule.actionType,
+                            payloadJson = schedule.payloadJson,
+                            scheduledAt = execution.scheduledAt,
                         )
-                        mutex.withLock { sqlStore.upsertExecution(updatedExecution) }
-                        scheduleWorker(updatedExecution, schedule)
-                    } else {
-                        updateExecutionStatus(executionId, RunStatus.FAILED, errorCode = result.errorCode, errorMessage = result.message, startedAt = startedAt)
+                    )
+                ) {
+                    ActionHandlerResult.Success -> {
+                        updateExecutionStatus(executionId, RunStatus.SUCCESS, startedAt = startedAt)
                         scheduleNextRecurrence(schedule)
+                        WorkerDispatchResult(success = true)
                     }
 
-                    WorkerDispatchResult(
-                        success = !shouldRetry,
-                        shouldRetry = shouldRetry,
-                        message = result.message,
-                    )
+                    is ActionHandlerResult.Failure -> {
+                        val attempt = execution.retryCount
+                        val shouldRetry = result.retryable && attempt < MAX_RETRIES
+
+                        if (shouldRetry) {
+                            createRetryExecution(
+                                execution = execution,
+                                constraints = schedule.constraints,
+                                errorCode = result.errorCode,
+                                errorMessage = result.message,
+                                startedAt = startedAt,
+                            )
+                        } else {
+                            updateExecutionStatus(
+                                executionId,
+                                RunStatus.FAILED,
+                                errorCode = result.errorCode,
+                                errorMessage = result.message,
+                                startedAt = startedAt,
+                            )
+                            scheduleNextRecurrence(schedule)
+                        }
+
+                        WorkerDispatchResult(
+                            success = !shouldRetry,
+                            shouldRetry = shouldRetry,
+                            message = result.message,
+                        )
+                    }
                 }
+            } catch (t: Throwable) {
+                val attempt = execution.retryCount
+                val shouldRetry = attempt < MAX_RETRIES
+
+                if (shouldRetry) {
+                    createRetryExecution(
+                        execution = execution,
+                        constraints = schedule.constraints,
+                        errorCode = "UNCAUGHT_EXCEPTION",
+                        errorMessage = t.message ?: "Unhandled exception",
+                        startedAt = startedAt,
+                    )
+                } else {
+                    updateExecutionStatus(
+                        executionId,
+                        RunStatus.FAILED,
+                        errorCode = "UNCAUGHT_EXCEPTION",
+                        errorMessage = t.message ?: "Unhandled exception",
+                        startedAt = startedAt,
+                    )
+                    scheduleNextRecurrence(schedule)
+                }
+
+                WorkerDispatchResult(success = !shouldRetry, shouldRetry = shouldRetry, message = t.message)
             }
-        } catch (t: Throwable) {
-            val attempt = execution.retryCount
-            val shouldRetry = attempt < MAX_RETRIES
-
-            if (shouldRetry) {
-                val nextDelay = nextBackoffDelay(schedule.constraints, attempt)
-                val rescheduledAt = Clock.System.now().plus(kotlin.time.Duration.parse("${nextDelay}ms"))
-
-                val updatedExecution = execution.copy(
-                    scheduledAt = rescheduledAt,
-                    status = RunStatus.PENDING,
-                    retryCount = attempt + 1,
-                    startedAt = null
-                )
-                mutex.withLock { sqlStore.upsertExecution(updatedExecution) }
-                scheduleWorker(updatedExecution, schedule)
-            } else {
-                updateExecutionStatus(executionId, RunStatus.FAILED, errorCode = "UNCAUGHT_EXCEPTION", errorMessage = t.message ?: "Unhandled exception", startedAt = startedAt)
-                scheduleNextRecurrence(schedule)
-            }
-
-            WorkerDispatchResult(success = !shouldRetry, shouldRetry = shouldRetry, message = t.message)
+        } finally {
+            reconcileSingleRunner()
         }
     }
 
@@ -272,12 +292,10 @@ internal class DefaultActionScheduler(
         )
 
         sqlStore.upsertExecution(execution)
-        scheduleWorker(execution, spec)
 
         val reminderExecution = buildReminderExecution(mainExecution = execution, spec = spec)
         if (reminderExecution != null) {
             sqlStore.upsertExecution(reminderExecution)
-            scheduleWorker(reminderExecution, spec)
         }
     }
 
@@ -334,16 +352,113 @@ internal class DefaultActionScheduler(
         return executionId.endsWith(REMINDER_SUFFIX)
     }
 
-    private suspend fun scheduleWorker(execution: ActionExecutionEntity, spec: ActionSpec) {
+    private suspend fun createRetryExecution(
+        execution: ActionExecutionEntity,
+        constraints: ActionConstraints,
+        errorCode: String,
+        errorMessage: String,
+        startedAt: Instant,
+    ) {
+        val nextAttempt = execution.retryCount + 1
+        val nextDelay = nextBackoffDelay(constraints, execution.retryCount)
+        val nextScheduledAt = Clock.System.now().plus(kotlin.time.Duration.parse("${nextDelay}ms"))
+        val retryExecutionId = "${baseExecutionId(execution.id)}-retry$nextAttempt"
+        val now = Clock.System.now()
+
+        mutex.withLock {
+            sqlStore.upsertExecution(
+                execution.copy(
+                    status = RunStatus.FAILED,
+                    startedAt = startedAt,
+                    endedAt = now,
+                    errorCode = errorCode,
+                    errorMessage = "Retrying as $retryExecutionId: $errorMessage",
+                )
+            )
+            sqlStore.upsertExecution(
+                ActionExecutionEntity(
+                    id = retryExecutionId,
+                    scheduleId = execution.scheduleId,
+                    scheduledAt = nextScheduledAt,
+                    startedAt = null,
+                    endedAt = null,
+                    status = RunStatus.PENDING,
+                    retryCount = nextAttempt,
+                    errorCode = null,
+                    errorMessage = null,
+                )
+            )
+        }
+    }
+
+    private suspend fun markExecutionNotFound(executionId: String) {
+        val now = Clock.System.now()
+        mutex.withLock {
+            sqlStore.upsertExecution(
+                ActionExecutionEntity(
+                    id = executionId,
+                    scheduleId = UNKNOWN_SCHEDULE_ID,
+                    scheduledAt = now,
+                    startedAt = now,
+                    endedAt = now,
+                    status = RunStatus.NOT_FOUND,
+                    retryCount = 0,
+                    errorCode = "EXECUTION_NOT_FOUND",
+                    errorMessage = "Execution payload $executionId does not map to persisted execution",
+                )
+            )
+        }
+    }
+
+    private suspend fun reconcileSingleRunner() {
+        val target = mutex.withLock { findNearestPendingExecutionWithSpec() }
+        if (target == null) {
+            schedulerEngine.cancelRunner(SDK_RUNNER_TASK_ID)
+            return
+        }
+
+        val (execution, spec) = target
         val nowMs = Clock.System.now().toEpochMilliseconds()
         val delayMs = (execution.scheduledAt.toEpochMilliseconds() - nowMs).coerceAtLeast(0)
 
         schedulerEngine.scheduleRunner(
-            executionId = execution.id,
+            runnerTaskId = SDK_RUNNER_TASK_ID,
             delayMs = delayMs,
-            inputJson = execution.id, // Pass executionId to worker
+            executionPayload = execution.id,
             constraints = spec.constraints,
         )
+    }
+
+    private suspend fun findNearestPendingExecutionWithSpec(): Pair<ActionExecutionEntity, ActionSpec>? {
+        while (true) {
+            val execution = sqlStore.getNearestPendingExecution() ?: return null
+            val schedule = sqlStore.getSchedule(execution.scheduleId)
+
+            if (schedule != null && schedule.enabled) {
+                return execution to schedule
+            }
+
+            val now = Clock.System.now()
+            val updatedStatus = if (schedule == null) RunStatus.NOT_FOUND else RunStatus.FAILED
+            val updatedMessage = if (schedule == null) {
+                "Schedule not found during reconciliation"
+            } else {
+                "Schedule disabled"
+            }
+
+            sqlStore.upsertExecution(
+                execution.copy(
+                    status = updatedStatus,
+                    endedAt = now,
+                    errorCode = if (schedule == null) "SCHEDULE_NOT_FOUND" else "SCHEDULE_DISABLED",
+                    errorMessage = updatedMessage,
+                )
+            )
+        }
+    }
+
+    private fun baseExecutionId(executionId: String): String {
+        return executionId.replace(RETRY_SUFFIX_REGEX, "")
     }
 
     private fun validate(spec: ActionSpec): Boolean {
@@ -369,11 +484,7 @@ internal class DefaultActionScheduler(
 
     private fun nextBackoffDelay(constraints: ActionConstraints, attempt: Int): Long {
         val base = constraints.backoffDelayMs.coerceAtLeast(5_000)
-        return if (constraints.exponentialBackoff) {
-            base * (1L shl attempt.coerceAtMost(10))
-        } else {
-            base
-        }
+        return base * (1L shl attempt.coerceAtMost(10))
     }
 
 

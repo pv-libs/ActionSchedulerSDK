@@ -23,10 +23,8 @@ data class ActionSpec(
 @Serializable
 data class ActionConstraints(
     val requiresNetwork: Boolean = false,
-    val requiresCharging: Boolean = false,
     val isHeavyTask: Boolean = false,
     val backoffDelayMs: Long = 30_000,
-    val exponentialBackoff: Boolean = true,
 )
 
 @Serializable
