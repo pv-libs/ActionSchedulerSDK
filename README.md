@@ -1,257 +1,292 @@
- # Action Scheduler SDK (Kotlin Multiplatform)
- 
- This repo contains:
- 
- - **SDK**: [`action_scheduler`](./action_scheduler)
- - **Sample UI (Compose Multiplatform)**: [`composeApp`](./composeApp)
- - **iOS host app (SwiftUI entry point)**: [`iosApp`](./iosApp)
- 
- The SDK lets you register recurring / one-time **actions** (your business logic) and have them executed via **OS-backed background scheduling** on Android and iOS.
- 
- ---
- 
- ## Setup (use the SDK in your app)
- 
- ### 1) Add dependency
- 
- In this repo, the sample app uses:
- 
- ```kotlin
- dependencies {
-     implementation(project(":action_scheduler"))
- }
- ```
- 
- If you publish this module, consumers would instead use your Maven coordinate (not included in this sample repo).
- 
- ### 2) Initialize on app startup
- 
- You must initialize the runtime **early** (before any background worker dispatch happens), then register action handlers.
- 
- #### Android
- 
- Initialize in your `Application.onCreate()` (see [`SampleActionSchedulerApp`](./composeApp/src/androidMain/kotlin/com/pv_libs/sampleactionscheduler/SampleActionSchedulerApp.kt)):
- 
- ```kotlin
- val scheduler = ActionSchedulerKit.initialize(
-     ActionSchedulerConfig(
-         platformContext = this, // Application context
-     )
- )
- 
- scheduler.registerHandler("YOUR_ACTION_TYPE") { invocation ->
-     // Do your work
-     ActionHandlerResult.Success
- }
- 
- scheduler.setNotificationHandler { notification ->
-     // Show a local notification (your implementation)
- }
- ```
- 
- Required permissions (sample) live in [`composeApp/src/androidMain/AndroidManifest.xml`](./composeApp/src/androidMain/AndroidManifest.xml):
- 
- - **`android.permission.POST_NOTIFICATIONS`** (Android 13+)
- - **`android.permission.INTERNET`** / **`android.permission.ACCESS_NETWORK_STATE`** (only needed if your action does network)
- 
- #### iOS
- 
- Initialize from Swift early (see [`iosApp/iosApp/iOSApp.swift`](./iosApp/iosApp/iOSApp.swift)):
- 
- ```swift
- SampleIosBootstrapKt.initializeSampleActionSchedulerIos()
- ```
- 
- Under the hood (see [`SampleIosBootstrap.kt`](./composeApp/src/iosMain/kotlin/com/pv_libs/sampleactionscheduler/SampleIosBootstrap.kt)) the SDK is initialized as:
- 
- ```kotlin
- ActionSchedulerKit.initialize(
-     ActionSchedulerConfig(
-         iosTaskIds = setOf("com.pv_libs.action_scheduler.runner"),
-     )
- )
- ```
- 
- Also update your iOS `Info.plist` (see sample [`iosApp/iosApp/Info.plist`](./iosApp/iosApp/Info.plist)):
- 
- - **`BGTaskSchedulerPermittedIdentifiers`** includes `com.pv_libs.sampleactionscheduler.action_executor`
- - **`UIBackgroundModes`** includes `processing`
- 
- ---
- 
- ## Features available
- 
- - **Recurrence rules** via `RecurrenceRule`:
-   - `OneTime(at)`
-   - `Daily(hour, minute)`
-   - `Weekly(dayOfWeekIso, hour, minute)`
-   - `Monthly(dayOfMonth, hour, minute)`
- - **Timezone-aware scheduling** via `ActionSpec.timezoneId`.
- - **OS-backed execution** through `kmpworkmanager` (Android WorkManager, iOS BGTaskScheduler).
- - **Optional pre-action notifications** via `notificationOffsetMinutes`.
- - **Retries with exponential backoff** when your handler returns retryable failure.
- - **Persistence + observability**:
-   - `getRegisteredActions(): Flow<List<ActionSpec>>`
-   - `getExecutionLogs(): Flow<List<ExecutionLog>>`
- 
- ---
- 
- ## Quick start: register an action
- 
- Create an `ActionSpec` and call `registerAction`:
- 
- ```kotlin
- val spec = ActionSpec(
-     actionId = "pay_rent",
-     actionType = "PAYMENT_REMINDER",
-     payloadJson = "{\"amount\":12000}",
-     recurrence = RecurrenceRule.Monthly(dayOfMonth = 1, hour = 9, minute = 0),
-     notificationOffsetMinutes = 24 * 60,
-     notificationTitle = "Rent due tomorrow",
-     notificationDescription = "Open the app to pay rent",
-     constraints = ActionConstraints(requiresNetwork = false),
- )
- 
- val result = scheduler.registerAction(spec)
- ```
- 
- Then register a handler for the `actionType`:
- 
- ```kotlin
- scheduler.registerHandler("PAYMENT_REMINDER") { invocation ->
-     // Use invocation.payloadJson, invocation.scheduledAt, etc.
-     ActionHandlerResult.Success
- }
- ```
- 
- ---
- 
- ## Internal workings (how it works)
- 
- This SDK is implemented as a **single-runner architecture**:
- 
- - For every registered `ActionSpec`, the SDK persists the **next due execution(s)** as rows in a Room-backed database.
- - A single OS task (ID: `com.pv_libs.action_scheduler.runner`) is always kept scheduled for the **nearest pending execution**.
- - After each dispatch (success/failure/retry), the SDK reconciles again and re-schedules the runner to point at the next nearest pending execution.
- 
- ### Architecture (high level)
- 
- ```mermaid
- flowchart LR
-     App[Host App] --> Kit[ActionSchedulerKit.initialize]
-     Kit --> Scheduler[DefaultActionScheduler]
- 
-     Scheduler --> Store[(Room DB)]
-     Scheduler --> Engine[SchedulerEngine]
-     Scheduler --> Handlers[Action handlers map]
-     Scheduler --> Notif[NotificationHandler]
- 
-     Engine --> KmpWM[kmpworkmanager]
-     KmpWM --> WM[Android WorkManager]
-     KmpWM --> BG[iOS BGTaskScheduler]
- 
-     WM --> Worker[Dispatch worker]
-     BG --> Worker
-     Worker --> Kit
-     Kit --> Scheduler
- ```
- 
- ### Persistence model (practical)
- 
- Internally we persist:
- 
- - **Schedules** (from `ActionSpec`)
- - **Executions** (one row per planned run, retry attempt, and pre-notification)
- 
- Execution logs are trimmed to `ActionSchedulerConfig.maxExecutionLogs`.
- 
- ### Register flow
- 
- When you call `registerAction(spec)`:
- 
- - **Validate** the schedule.
- - **Upsert** the schedule in the DB.
- - Compute the **next occurrence** (calendar-aware; one-shot scheduling).
- - Insert a **PENDING** execution row for the next action time.
- - If `notificationOffsetMinutes` is set, insert another **PENDING** execution with ID suffix `-reminder`.
- - Reconcile and schedule the single runner to the nearest pending execution.
- 
- ### Execution / dispatch flow
- 
- ```mermaid
- sequenceDiagram
-     participant OS as OS Scheduler
-     participant W as kmpworkmanager Worker
-     participant Kit as ActionSchedulerKit
-     participant S as DefaultActionScheduler
-     participant DB as Room DB
-     participant H as ActionHandler
-     participant N as NotificationHandler
- 
-     OS->>W: Run task (payload = executionId)
-     W->>Kit: dispatchFromWorker(executionId)
-     Kit->>S: dispatch(executionId)
-     S->>DB: load execution + schedule
- 
-     alt reminder execution ("-reminder")
-         S->>N: onNotify(ActionNotification)
-         S->>DB: mark SUCCESS
-     else normal action execution
-         S->>H: onExecute(ActionInvocation)
-         alt handler success
-             S->>DB: mark SUCCESS
-             S->>DB: plan next recurrence (insert next PENDING)
-         else handler failure
-             alt retryable + attempts left
-                 S->>DB: mark FAILED (original)
-                 S->>DB: insert retry execution ("-retryN")
-             else not retryable / exhausted
-                 S->>DB: mark FAILED
-                 S->>DB: plan next recurrence
-             end
-         end
-     end
- 
-     S->>S: reconcileSingleRunner()
- ```
- 
- ### Retries
- 
- - Max attempts: **3**.
- - Backoff is exponential: `backoffDelayMs * 2^attempt` (see `ActionConstraints.backoffDelayMs`).
- - Each retry is a *new execution row* with ID suffix `-retryN`.
- 
- ### Idempotency / duplicate triggers
- 
- Dispatch is designed to be safe if the OS delivers a task more than once:
- 
- - If an execution is missing, we record `RunStatus.NOT_FOUND` and return `success = true` to the worker.
- - If an execution is already processed (`status != PENDING`), dispatch returns `success = true`.
- 
- (Your handlers should still be designed to be idempotent for best safety.)
- 
- ---
- 
- ## Sample app
- 
- The sample (`composeApp`) demonstrates:
- 
- - Creating an action via UI (`HomeScreen`)
- - Registering a handler (`registerSampleActionHandlers`)
- - Scheduling daily/weekly/monthly/one-time reminders
- - Optional pre-action reminders (notification offset)
- - Viewing execution logs + statuses in real time via `Flow`
- 
- Key files:
- 
- - **Android init**: [`SampleActionSchedulerApp.kt`](./composeApp/src/androidMain/kotlin/com/pv_libs/sampleactionscheduler/SampleActionSchedulerApp.kt)
- - **iOS init**: [`SampleIosBootstrap.kt`](./composeApp/src/iosMain/kotlin/com/pv_libs/sampleactionscheduler/SampleIosBootstrap.kt)
- - **UI**: [`HomeScreen.kt`](./composeApp/src/commonMain/kotlin/com/pv_libs/sampleactionscheduler/HomeScreen.kt)
- 
- ---
- 
- ## Notes / limitations
- 
- - **iOS scheduling is best-effort**. BGTaskScheduler execution timing is opportunistic and may be delayed.
- - If the user **force-quits** the app, iOS may stop delivering background tasks until the app is opened again.
- 
+# Action Scheduler SDK (Kotlin Multiplatform)
+
+This repository contains:
+
+- **SDK module**: [`action_scheduler`](./action_scheduler)
+- **Sample app (Compose Multiplatform)**: [`composeApp`](./composeApp)
+- **iOS host app (SwiftUI)**: [`iosApp`](./iosApp)
+
+The SDK lets app developers register recurring or one-time **actions** and execute them with OS-backed background scheduling on Android and iOS.
+
+---
+
+## What the SDK currently provides
+
+- KMP-first scheduling API (`commonMain`).
+- Recurrence support:
+  - `OneTime(at)`
+  - `Daily(hour, minute)`
+  - `Weekly(dayOfWeekIso, hour, minute, skipWeeks)`
+  - `Monthly(dayOfMonth, hour, minute)`
+- Action execution via `ActionHandlerFactory`.
+- Optional pre-action reminders (`notificationOffsetMinutes`).
+- Retry support for retryable failures (max 3 retries, exponential backoff).
+- Persistent schedule + execution history (Room + bundled SQLite).
+- Reactive observability with `Flow`:
+  - `getRegisteredActions()`
+  - `getExecutionLogs()`
+
+---
+
+## Public API (current)
+
+```kotlin
+interface ActionScheduler {
+    suspend fun registerAction(spec: ActionSpec): RegistrationResult
+    suspend fun cancelAction(actionId: String)
+
+    fun getRegisteredActions(): Flow<List<ActionSpec>>
+    fun getExecutionLogs(): Flow<List<ExecutionLog>>
+
+    fun setNotificationHandler(handler: NotificationHandler?)
+}
+
+fun interface ActionHandler {
+    suspend fun onExecute(invocation: ActionInvocation): ActionHandlerResult
+}
+
+fun interface ActionHandlerFactory {
+    fun create(actionType: String): ActionHandler?
+}
+```
+
+> Note: there is no `registerHandler(...)` API on `ActionScheduler`. Handlers are resolved through `ActionHandlerFactory`, passed at initialization.
+
+---
+
+## Setup
+
+### 1) Add dependency
+
+Inside this repository, the sample app depends on the local project module:
+
+```kotlin
+dependencies {
+    implementation(project(":action_scheduler"))
+}
+```
+
+If you publish the SDK, consumers can use your Maven coordinates instead.
+
+### 2) Initialize early on app startup
+
+Initialize `ActionSchedulerKit` as early as possible so worker dispatch can resolve handlers.
+
+#### Android
+
+Initialize from `Application.onCreate()`:
+
+```kotlin
+class App : Application() {
+    override fun onCreate() {
+        super.onCreate()
+
+        val notificationHandler: NotificationHandler = { notification ->
+            // show local notification
+        }
+
+        val scheduler = ActionSchedulerKit.initialize(
+            actionHandlerFactory = SampleActionHandlerFactory(notificationHandler),
+            config = ActionSchedulerConfig(
+                platformContext = this, // required on Android
+            ),
+        )
+
+        scheduler.setNotificationHandler(notificationHandler)
+    }
+}
+```
+
+Sample Android permissions are in
+[`composeApp/src/androidMain/AndroidManifest.xml`](./composeApp/src/androidMain/AndroidManifest.xml):
+
+- `android.permission.POST_NOTIFICATIONS` (Android 13+)
+- `android.permission.INTERNET`
+- `android.permission.ACCESS_NETWORK_STATE`
+
+#### iOS
+
+Initialize from Swift startup (sample):
+
+```swift
+SampleIosBootstrapKt.initializeSampleActionSchedulerIos()
+```
+
+Current sample bootstrap configures task ID:
+
+- `com.pv_libs.sampleactionscheduler.action_executor`
+
+Ensure `Info.plist` includes:
+
+- `BGTaskSchedulerPermittedIdentifiers` with `com.pv_libs.sampleactionscheduler.action_executor`
+- `UIBackgroundModes` with at least `processing` (sample includes `processing` and `fetch`)
+
+---
+
+## Registering actions
+
+### ActionSpec fields
+
+```kotlin
+data class ActionSpec(
+    val actionId: String,
+    val actionType: String,
+    val payloadJson: String,
+    val recurrence: RecurrenceRule,
+    val timezoneId: String,
+    val notificationOffsetMinutes: Int? = null,
+    val notificationTitle: String? = null,
+    val notificationDescription: String? = null,
+    val enabled: Boolean = true,
+    val constraints: ActionConstraints = ActionConstraints(),
+)
+```
+
+### Example: monthly reminder
+
+```kotlin
+val spec = ActionSpec(
+    actionId = "pay_rent",
+    actionType = "PAYMENT_REMINDER",
+    payloadJson = "{\"amount\":12000}",
+    recurrence = RecurrenceRule.Monthly(dayOfMonth = 1, hour = 9, minute = 0),
+    notificationOffsetMinutes = 24 * 60,
+    notificationTitle = "Rent due tomorrow",
+    notificationDescription = "Open the app to pay rent",
+    constraints = ActionConstraints(requiresNetwork = true),
+)
+
+val result = scheduler.registerAction(spec)
+```
+
+### Example: weekly vs bi-weekly
+
+```kotlin
+// Every Monday at 09:00
+RecurrenceRule.Weekly(dayOfWeekIso = 1, hour = 9, minute = 0, skipWeeks = 0)
+
+// Every 2 weeks on Monday at 09:00
+RecurrenceRule.Weekly(dayOfWeekIso = 1, hour = 9, minute = 0, skipWeeks = 1)
+```
+
+### Cancel an action
+
+```kotlin
+scheduler.cancelAction("pay_rent")
+```
+
+---
+
+## Action handlers
+
+Handlers are resolved by `actionType` through your `ActionHandlerFactory`.
+
+```kotlin
+class MyActionHandlerFactory : ActionHandlerFactory {
+    override fun create(actionType: String): ActionHandler? {
+        return when (actionType) {
+            "PAYMENT_REMINDER" -> ActionHandler { invocation ->
+                // business logic
+                ActionHandlerResult.Success
+            }
+            else -> null
+        }
+    }
+}
+```
+
+If no handler is returned for an action type, execution is logged as `HANDLER_NOT_FOUND`.
+
+---
+
+## Internal behavior (how scheduling works)
+
+The SDK uses a **single-runner** approach:
+
+1. `registerAction(...)` validates + upserts `ActionSpec`.
+2. It computes the next due execution and stores it as `PENDING`.
+3. If reminder offset exists, it also stores a `-reminder` execution.
+4. It always schedules a single OS worker for the nearest pending execution.
+5. After each dispatch, it reconciles and schedules the next nearest one.
+
+Current runner task ID in SDK internals:
+
+- `com.pv_libs.sampleactionscheduler.action_executor`
+
+### Retry model
+
+- Max retries: **3**.
+- Backoff: `max(backoffDelayMs, 5000) * 2^attempt`.
+- Each retry is persisted as a separate execution row (`-retryN` suffix).
+
+### Validation rules
+
+`registerAction` rejects invalid specs (`REJECTED_INVALID_PARAMS`) when:
+
+- `actionId` or `actionType` is blank
+- `notificationOffsetMinutes` is negative
+- time/day fields are out of supported ranges
+- one-time schedule is in the past
+
+### Persistence details
+
+- Uses Room entities for schedules + executions.
+- Execution rows are trimmed to `maxExecutionLogs` (minimum enforced retention: 20).
+- Current DB setup uses `fallbackToDestructiveMigration(true)`.
+
+---
+
+## Observability
+
+Use flows for real-time state:
+
+```kotlin
+val actionsFlow: Flow<List<ActionSpec>> = scheduler.getRegisteredActions()
+val logsFlow: Flow<List<ExecutionLog>> = scheduler.getExecutionLogs()
+```
+
+`RunStatus` enum currently includes:
+
+- `SUCCESS`, `FAILED`, `NOT_FOUND`, `DEDUPE_SKIPPED`, `NOTIFICATION_SENT`,
+  `HANDLER_NOT_FOUND`, `RUNNING`, `PENDING`
+
+---
+
+## Sample app guide
+
+The sample demonstrates:
+
+- App startup initialization on Android and iOS
+- Factory-based handler registration with 2 action types (`CUSTOM_REMINDER`, `DIGI_GOLD`)
+- Daily/weekly/bi-weekly/monthly/one-time scheduling from UI
+- Optional reminder offset notifications
+- Real-time list of registered actions and execution logs
+
+Key files:
+
+- Android startup: [`SampleActionSchedulerApp.kt`](./composeApp/src/androidMain/kotlin/com/pv_libs/sampleactionscheduler/SampleActionSchedulerApp.kt)
+- iOS startup: [`SampleIosBootstrap.kt`](./composeApp/src/iosMain/kotlin/com/pv_libs/sampleactionscheduler/SampleIosBootstrap.kt)
+- Handler factory: [`SampleActionHandlerFactory.kt`](./composeApp/src/commonMain/kotlin/com/pv_libs/sampleactionscheduler/SampleActionHandlerFactory.kt)
+- Scheduler UI: [`HomeScreen.kt`](./composeApp/src/commonMain/kotlin/com/pv_libs/sampleactionscheduler/HomeScreen.kt)
+
+---
+
+## Build / run
+
+From repository root:
+
+```bash
+./gradlew :action_scheduler:assemble
+./gradlew :composeApp:assembleDebug
+```
+
+Current tests in `action_scheduler` are template sample tests; comprehensive SDK behavior tests are not added yet.
+
+---
+
+## Notes and limitations
+
+- iOS background scheduling is best-effort (BGTaskScheduler timing is not exact).
+- If app is force-quit on iOS, background execution may stop until relaunch.
+- There is no separate `updateAction(...)` API yet; re-register with same `actionId` to upsert.
+- This repository currently wires the SDK as a local module (no published artifact in repo).
